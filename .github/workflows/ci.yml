@@ -53,6 +53,11 @@ jobs:
       # Deliberately no actions/checkout: the Kaniko image has no Node, so
       # JavaScript actions cannot run in it. Kaniko fetches the repo itself
       # from the git context below instead, which needs no checkout step.
+      # TARGETARCH is passed explicitly: it is one of BuildKit's automatic
+      # platform build args, and kaniko does not provide them — the
+      # Dockerfile's `case "$TARGETARCH"` picks the Tailwind binary and
+      # fails under `set -u` when it is empty. Hardcoded to arm64 because
+      # that is what this runner is and what kaniko can therefore build.
       - name: Build image (no push)
         env:
           # This repo is private, so the git context needs credentials.
@@ -66,6 +71,7 @@ jobs:
           /kaniko/executor \
             --context "git://github.com/${{ github.repository }}.git#${{ github.ref }}" \
             --dockerfile Dockerfile \
+            --build-arg TARGETARCH=arm64 \
             --no-push \
             --verbosity info
 

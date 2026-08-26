@@ -65,6 +65,9 @@ jobs:
           esac
           echo "Tag $TAG accepted."
 
+      # TARGETARCH is passed explicitly — see ci.yml. Kaniko does not
+      # provide BuildKit's automatic platform args, and arm64 is both what
+      # this runner is and the only architecture kaniko can produce here.
       - name: Build and push to GHCR
         env:
           # See ci.yml: kaniko maps GIT_TOKEN to the username with an empty
@@ -88,6 +91,7 @@ jobs:
           /kaniko/executor \
             --context "git://github.com/${{ github.repository }}.git#refs/tags/${TAG}" \
             --dockerfile Dockerfile \
+            --build-arg TARGETARCH=arm64 \
             --destination "$REGISTRY/$IMAGE_NAME:$version" \
             --destination "$REGISTRY/$IMAGE_NAME:$minor" \
             --destination "$REGISTRY/$IMAGE_NAME:latest" \
