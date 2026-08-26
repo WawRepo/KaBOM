@@ -211,7 +211,14 @@ jobs:
           helm package charts/kabom --destination dist
           echo "$GHCR_TOKEN" | helm registry login "$REGISTRY" \
             --username "${{ github.actor }}" --password-stdin
-          helm push "dist/kabom-${VERSION}.tgz" "oci://$REGISTRY/${{ github.repository_owner }}/charts"
+
+          # Lowercased deliberately. OCI repository names must be lowercase,
+          # and github.repository_owner keeps the account's real casing
+          # ("WawRepo"), which helm rejects outright:
+          #   Error: invalid reference: invalid repository "WawRepo/charts/kabom"
+          # Same reason IMAGE_NAME above is written out in lowercase.
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm push "dist/kabom-${VERSION}.tgz" "oci://$REGISTRY/${owner}/charts"
 
       - name: Attach the chart to the release
         uses: actions/github-script@v7
