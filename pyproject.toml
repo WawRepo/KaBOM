@@ -6,8 +6,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
+    "authlib>=1.7.2",
+    "bcrypt>=5.0.0",
     "boto3>=1.43.80",
     "fastapi>=0.115",
+    # authlib's starlette_client integration imports httpx unconditionally
+    # (kabom/main.py imports it at module load, regardless of KABOM_AUTH) —
+    # this must be a runtime dependency, not just test tooling.
+    "httpx>=0.27",
+    "itsdangerous>=2.2.0",
     "jinja2>=3.1",
     "uvicorn[standard]>=0.32",
 ]
@@ -16,7 +23,6 @@ dependencies = [
 dev = [
     "ruff>=0.7",
     "pytest>=8.3",
-    "httpx>=0.27",
     "moto[s3]>=5.2.3",
 ]
 

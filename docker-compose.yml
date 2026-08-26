@@ -64,6 +64,15 @@ services:
       # dev session or a Playwright run and re-ingests over a scenario the
       # test just set up.
       KABOM_REFRESH_MINUTES: "720"
+      # HOME-233: auth is mandatory, even here. This hash is for the fixed,
+      # dev-only password below it (never a real credential, never used
+      # outside this compose file) — see tests/e2e/playwright.config.ts's
+      # httpCredentials, which must match. Real deployments get their own
+      # hash from the Kubernetes Secret in HOME-234/236, never this one.
+      KABOM_AUTH: basic
+      KABOM_BASIC_USER: kabom-dev
+      # bcrypt hash of "kabom-dev-only-not-a-real-password"
+      KABOM_BASIC_PASSWORD_HASH: "$$2b$$12$$F7iaI9BH/eqVXaJv/4qBVeomI9m5qZL4F6ESGwxOIOEMxygWObFM."
 
 volumes:
   minio-data:

@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from kabom import db
+from kabom.auth import require_auth
 from kabom.config import S3Config
 from kabom.cyclonedx import Component, ParsedSBOM
 from kabom.ingest import IngestError, IngestResult
@@ -41,14 +42,20 @@ def conn(tmp_path):
 
 @pytest.fixture
 def client(conn):
+    """This file tests the UI screens/banner, not auth (HOME-233 owns
+    that — see tests/test_auth.py), so `require_auth` is overridden away
+    here the same way `get_db_connection` already is."""
+
     def override_get_db_connection():
         yield conn
 
     app.dependency_overrides[get_db_connection] = override_get_db_connection
+    app.dependency_overrides[require_auth] = lambda: None
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_db_connection, None)
+        app.dependency_overrides.pop(require_auth, None)
 
 
 def make_sbom(source_key, subject, generated_at, components) -> ParsedSBOM:
