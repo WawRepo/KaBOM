@@ -1,6 +1,4 @@
-<img src="kabom/static/img/logo.jpeg" alt="" width="140" />
-
-# KaBOM
+<img src="kabom/static/img/logo-wordmark.jpeg" alt="KaBOM" width="260" />
 
 *Your SBOMs, without the enterprise.*
 
