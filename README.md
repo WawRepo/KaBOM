@@ -1,4 +1,4 @@
-<img src="kabom/static/img/logo.svg" alt="KaBOM" width="480" />
+<img src="kabom/static/img/logo.jpeg" alt="KaBOM" width="240" />
 
 *"Your SBOMs, without the enterprise."*
 
