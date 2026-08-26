@@ -9,8 +9,7 @@ name: Release
 # `docker` job only builds, to catch a broken Dockerfile on every push.
 #
 # Auth uses the repo's own GITHUB_TOKEN (via `permissions: packages: write`
-# below) — no new secret to create or rotate, per CLAUDE.md's "Secrets in
-# env vars" trap.
+# below) — no new secret to create or rotate.
 
 on:
   release:

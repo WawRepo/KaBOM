@@ -4,13 +4,13 @@
 # node, no node_modules, anywhere in this build. This stage exists purely to
 # produce kabom/static/css/style.css; it is discarded after that, so nothing
 # it installs (curl, the binary itself) ever reaches the runtime image below.
-# See CLAUDE.md and HOME-232: "No node_modules in the runtime image."
+# The runtime image must never contain node_modules.
 FROM debian:bookworm-slim AS tailwind
 
 ARG TAILWIND_VERSION=v4.3.3
 # Set automatically by BuildKit to the target platform's arch (amd64/arm64)
-# — this is what makes the multi-arch build in CLAUDE.md's traps table work
-# without hand-picking a binary.
+# — this is what makes the multi-arch build work without hand-picking a
+# binary.
 ARG TARGETARCH
 
 RUN apt-get update \

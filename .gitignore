@@ -15,3 +15,6 @@ __pycache__/
 tests/e2e/node_modules/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
+
+# Local Claude Code instructions — private, not for the public repo.
+CLAUDE.md

@@ -1,8 +1,8 @@
 """S3 (MinIO) configuration.
 
 Config comes from environment variables only. No credentials in code, in
-defaults, or in tests — see CLAUDE.md's "Secrets in env vars" trap and
-HOME-229's "no credentials in code, in defaults, or in tests" requirement.
+defaults, or in tests: anything in an environment variable lands in
+`docker inspect` and in the pod spec.
 """
 
 from __future__ import annotations
@@ -69,9 +69,9 @@ def load_db_path() -> str:
     """Where the SQLite database file lives.
 
     Defaults to a file in the working directory. Whatever path this points
-    to, it must be on `local-path` storage, never `smb-storage` — SMB gives no
-    POSIX locking and SQLite corrupts on it. See CLAUDE.md's traps table and
-    schema.sql's header comment.
+    to must be on storage with real POSIX locking — SQLite corrupts on
+    SMB/CIFS, which rules out most NAS mounts. See schema.sql's header
+    comment.
     """
     return os.environ.get("KABOM_DB_PATH") or DEFAULT_DB_PATH
 

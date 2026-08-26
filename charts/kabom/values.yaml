@@ -2,25 +2,23 @@
 #
 # This app has exactly one deployment, forever: one replica, one namespace
 # (whatever the caller installs it into), one node (SQLite on a PVC pins it
-# there anyway). Per HOME-236/CLAUDE.md's "take simple", none of that is a
-# value here — there is nothing to configure because it never varies.
+# there anyway). Taking the simple option, none of that is a value here —
+# there is nothing to configure because it never varies.
 
 image:
   repository: ghcr.io/wawrepo/kabom
   tag: latest
   pullPolicy: IfNotPresent
 
-# Ingress host. Matches the Terragrunt unit's `variable "host"` default in
-# infra-repo (see HOME-234) — this is what ends up in the generated README
-# URL table over there.
+# Ingress host. A placeholder — override it, there is no useful default.
 ingress:
-  host: kabom.example.invalid
+  host: kabom.example.com
   # Leave empty to use the cluster's default IngressClass.
   className: ""
   annotations: {}
   # TLS is off by default so `helm template`/`helm install` work with no
-  # overrides. infra-repo turns this on and points secretName at whatever
-  # cert-manager (or SOPS) is providing the certificate for the real host.
+  # overrides. Turn it on and point secretName at whatever cert-manager (or
+  # your own secret) provides the certificate for the real host.
   tls:
     enabled: false
     secretName: ""
@@ -36,12 +34,13 @@ resources:
     memory: 256Mi
 
 # Storage for the SQLite database file (KABOM_DB_PATH, mounted at /data —
-# see the Dockerfile). storageClass MUST be "local-path", never "smb-storage":
-# SMB gives no POSIX locking and SQLite corrupts on it. This is a standing
-# trap in this homelab (see CLAUDE.md's traps table) — it is the same
-# reason Immich's Postgres and Gitea's data both live on local-path too. It
-# also means this Pod is pinned to whichever node the PVC's volume was
-# provisioned on; that is an accepted trade-off, not a bug.
+# see the Dockerfile).
+#
+# storageClass MUST provide real POSIX locking. SMB/CIFS does not, and
+# SQLite corrupts on it, which rules out most NAS-backed classes — use a
+# node-local provisioner. That pins this Pod to whichever node the volume
+# was provisioned on; with one replica and a database rebuilt from the
+# bucket in seconds, that is an accepted trade-off, not a bug.
 persistence:
   storageClass: local-path
   size: 1Gi
@@ -64,13 +63,14 @@ env:
   # here rather than in the Secret.
   allowedEmails: ""
 
-# Name of an EXISTING Kubernetes Secret (created by SOPS in infra-repo —
-# see HOME-234) holding whichever of these keys the chosen authMode needs:
+# Name of an EXISTING Kubernetes Secret, holding whichever of these keys the
+# chosen authMode needs:
 #   KABOM_S3_ACCESS_KEY, KABOM_S3_SECRET_KEY        (always)
 #   KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH     (authMode: basic)
 #   KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET,
 #   KABOM_SESSION_SECRET                            (authMode: google)
 # This chart only references it by name (envFrom.secretRef) — it never
-# creates, reads, or templates the Secret's contents. The SOPS flow that
-# creates it in infra-repo is unchanged by this chart's existence.
+# creates, reads, or templates the Secret's contents, so whatever you use to
+# manage secrets (SOPS, Sealed Secrets, an external operator) keeps owning
+# them.
 secretName: kabom-secrets

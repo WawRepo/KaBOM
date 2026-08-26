@@ -12,6 +12,5 @@ version: 0.1.0
 # tag deployed is controlled by values.image.tag, not this field.
 appVersion: "0.1.0"
 
-# Deliberately no chart repository (ChartMuseum, OCI registry, etc.) per
-# HOME-236 — one chart, one consumer (infra-repo), referenced by local path
-# or the GitHub repo directly.
+# Deliberately no chart repository (ChartMuseum, OCI registry, etc.) — one
+# chart, referenced by local path or straight from the GitHub repo.

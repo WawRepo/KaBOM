@@ -7,17 +7,16 @@ not a placeholder — it may be the only mode this app ever runs in.
 
 - **basic**: HTTP Basic auth. Username from `KABOM_BASIC_USER`, password
   checked against a bcrypt hash from `KABOM_BASIC_PASSWORD_HASH` — never a
-  plaintext password in an environment variable (see CLAUDE.md's "Secrets
-  in env vars" trap: it would land in `docker inspect` and in the pod
-  spec). Stateless: every request carries its own credentials, so there is
-  no session and therefore no need for `KABOM_SESSION_SECRET`.
+  plaintext password in an environment variable: it would land in
+  `docker inspect` and in the pod spec. Stateless: every request carries
+  its own credentials, so there is no session and therefore no need for
+  `KABOM_SESSION_SECRET`.
 - **google**: authlib's standard OAuth2 authorization-code flow against
   Google, gated by an explicit email allow-list (`KABOM_ALLOWED_EMAILS`),
   with Google's `email_verified` claim checked. The session lives in a
   signed cookie (Starlette's `SessionMiddleware`, backed by itsdangerous),
   which needs `KABOM_SESSION_SECRET`. The app refuses to start rather than
-  generate one — see CLAUDE.md's "A generated secret" trap: a secret minted
-  at boot invalidates every session on restart, which gets "fixed" by
+  generate one: a secret minted at boot invalidates every session on restart, which gets "fixed" by
   someone hardcoding one.
 
 Every function here reads the environment fresh on each call rather than
@@ -163,7 +162,7 @@ class GoogleAuthConfig:
 def load_session_secret() -> str:
     """`KABOM_SESSION_SECRET`, required whenever session-cookie signing is in
     play (at minimum, whenever `KABOM_AUTH=google`). Never generated — see
-    CLAUDE.md's "A generated secret" trap. Basic auth is stateless (every
+    a secret minted at boot. Basic auth is stateless (every
     request re-sends its own credentials), so it does not need this at all;
     only google mode's signed session cookie does.
     """

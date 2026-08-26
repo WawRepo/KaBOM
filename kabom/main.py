@@ -6,12 +6,12 @@ Wires kabom.db's run_ingest into the app (HOME-231):
   nobody-asked on a fresh boot.
 - POST /admin/refresh triggers a pass on demand.
 - A single asyncio background task re-ingests every KABOM_REFRESH_MINUTES
-  (default 60) — a plain timer, not a job queue, per CLAUDE.md's "take
-  simple": this is a single-process homelab app.
+  (default 60) — a plain timer, not a job queue: this is a single-process
+  app.
 
 Every ingest failure is logged and recorded in the `run` table, and the app
-keeps serving whatever it already has — see CLAUDE.md's "must never show
-stale data as though it were current" (which is a call to always disclose
+keeps serving whatever it already has — the rule that stale data must never
+look current is a call to always disclose
 the age, not a license to hide old data behind a crash).
 
 This module also implements the search API — the one real feature — and
@@ -140,7 +140,7 @@ app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="stati
 # KABOM_SESSION_SECRET when google mode is selected: raising here stops
 # `uvicorn kabom.main:app` (and `import kabom.main`) dead, before a single
 # request can be served — not a generated secret, not a per-request 500
-# discovered later. See CLAUDE.md's "A generated secret" trap.
+# discovered later.
 if os.environ.get("KABOM_AUTH") == "google":
     _google_config = auth.load_google_auth_config()
     app.add_middleware(
@@ -312,8 +312,7 @@ def status(conn: sqlite3.Connection = Depends(get_db_connection)) -> dict:
 
     Deliberately the oldest, not the newest and not the average: one SBOM
     stuck at 40 days while the other 26 refresh nightly is exactly the case
-    that matters, and the other two statistics would hide it (see CLAUDE.md
-    and HOME-231).
+    that matters, and the other two statistics would hide it.
     """
     return _status_dict(conn)
 
@@ -372,7 +371,7 @@ def _as_utc(value: datetime) -> datetime:
 # --- HOME-232: the UI — three screens and the freshness banner --------------
 #
 # Jinja2 + HTMX + Tailwind (standalone CLI), server-rendered, no JS bundler,
-# no node_modules in the runtime image — see CLAUDE.md and the ticket. Every
+# no node_modules in the runtime image. Every
 # route below renders a full HTML page; there is no separate JSON-for-the-UI
 # endpoint, so a browser with HTMX blocked or JavaScript disabled still gets
 # a fully working page from a plain <form method="get"> submit.
@@ -412,8 +411,8 @@ def _freshness_banner(status: dict) -> dict:
     """Turn /api/status's raw numbers into what the banner shows.
 
     Uses the OLDEST sbom's age (status["age_seconds"]), never the newest or
-    an average — see CLAUDE.md's "the age shown is always that of the oldest
-    SBOM". Any failed read forces RED regardless of age: a file that could
+    an average: the age shown is always that of the oldest SBOM. Any
+    failed read forces RED regardless of age: a file that could
     not be parsed this run is exactly the kind of thing that makes "we don't
     have that package" an unsafe answer, however fresh everything else is.
 

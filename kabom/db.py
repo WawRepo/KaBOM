@@ -1,8 +1,8 @@
 """SQLite schema setup and transactional ingest.
 
-Plain `sqlite3` and `schema.sql` — no ORM, no migrations, per CLAUDE.md and
-HOME-230. If the schema changes, drop the database file and re-ingest; the
-source of truth is S3 (kabom.ingest) and a full rebuild takes seconds.
+Plain `sqlite3` and `schema.sql` — no ORM, no migrations. If the schema
+changes, drop the database file and re-ingest; the source of truth is S3
+(kabom.ingest) and a full rebuild takes seconds.
 
 This module writes the already-parsed output of kabom.ingest.ingest_all into
 SQLite. It does not talk to S3 itself and does not expose an HTTP route or a
@@ -11,8 +11,8 @@ API is what actually needs a place to trigger a refresh from). This module
 only needs to guarantee one thing well: a failed or interrupted write must
 never leave the database half-changed.
 
-Never point the database file at `smb-storage` — SMB gives no POSIX locking and
-SQLite corrupts on it. See CLAUDE.md's traps table; it goes on `local-path`.
+Never point the database file at an SMB/CIFS mount — SMB gives no POSIX
+locking and SQLite corrupts on it. Node-local storage, not a NAS.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def run_ingest(conn: sqlite3.Connection, config: S3Config) -> RunSummary:
 
     A half-replaced database would let the search feature answer "we don't
     have that package" for a package that was simply never re-loaded — see
-    CLAUDE.md's "must never show stale data as though it were current."
+    the rule that stale data must never look current.
 
     Callers must call init_db(conn) at least once before this.
     """
@@ -148,8 +148,8 @@ def _replace_all(conn: sqlite3.Connection, sboms: list[ParsedSBOM]) -> None:
 
     ingest_all always reads the entire bucket, so a full replace here is
     equivalent to "replace rows per subject, old rows removed" and simpler
-    to reason about — see CLAUDE.md's "take simple". `ON DELETE CASCADE` on
-    component.sbom_id removes the matching components for free.
+    to reason about. `ON DELETE CASCADE` on component.sbom_id removes the
+    matching components for free.
     """
     conn.execute("DELETE FROM sbom")
     ingested_at = _now_iso()

@@ -1,7 +1,7 @@
 # One replica, always. KaBOM's data lives in a single SQLite file on a
 # ReadWriteOnce PVC (see pvc.yaml and values.yaml's persistence comment) —
 # a second replica could not attach the same volume, and there is exactly
-# one user to serve. Not a value: it never varies. See CLAUDE.md.
+# one user to serve. Not a value: it never varies.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

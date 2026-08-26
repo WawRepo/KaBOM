@@ -57,9 +57,8 @@ jobs:
 
   helm:
     # Renders the chart with no live cluster involved — helm lint and helm
-    # template are both purely local/offline (see HOME-236). This never
-    # installs anything anywhere; the chart's actual deploy is infra-repo's
-    # job via a helm_release, not this repo's CI.
+    # template are both purely local/offline. This never installs anything
+    # anywhere; deploying the chart is the operator's job, not this repo's CI.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

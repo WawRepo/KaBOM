@@ -3,14 +3,15 @@
 CycloneDX files.
 
 This is dev/test tooling only — see docker-compose.yml's `seed` service. It
-runs against the compose-local MinIO container, never the real storage-host MinIO,
+runs against the compose-local MinIO container, never your real MinIO,
 and it is never copied into the production image (the Dockerfile only ever
 COPYs the `kabom` package; this script, dev-sboms/ and tests/samples/ are
 bind-mounted into the `seed` container by docker-compose instead).
 
 Reuses the app's own boto3 dependency and the same image built from the
 production Dockerfile, rather than pulling in a second `mc`/`jq`-based
-image — see CLAUDE.md: "every script in the homelab is Python."
+image — the rest of this project is Python, and a second toolchain for one
+script is a tax paid forever.
 
 Everything in dev-sboms/ is uploaded, so dropping your own real Syft output
 in there is all it takes to browse it locally — no code change needed.

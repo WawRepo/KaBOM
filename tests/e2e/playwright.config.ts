@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Runs against the docker-compose stack (KaBOM + seeded MinIO) — never the
-// real storage-host MinIO. See run-e2e.sh, which brings that stack up before
+// Runs against the docker-compose stack (KaBOM + seeded MinIO) — never a
+// real MinIO. See run-e2e.sh, which brings that stack up before
 // invoking `playwright test` and tears it down after, and the README for
 // how to run this by hand.
 export default defineConfig({

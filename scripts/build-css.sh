@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate kabom/static/css/style.css using the Tailwind *standalone* CLI —
 # a single downloaded binary, no npm, no node_modules, no JS build tooling.
-# See CLAUDE.md and HOME-232: the runtime image must never contain any of
+# The runtime image must never contain any of
 # that; this script is a dev-time/build-time step only.
 #
 # Usage:

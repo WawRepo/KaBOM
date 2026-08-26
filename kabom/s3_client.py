@@ -1,7 +1,6 @@
 """Thin, read-only S3 (MinIO) access.
 
-KaBOM never writes to the bucket — see CLAUDE.md and HOME-229's "Do not write
-to the bucket" requirement. This module only lists and fetches objects.
+KaBOM never writes to the bucket, ever. This module only lists and fetches objects.
 """
 
 from __future__ import annotations

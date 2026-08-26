@@ -1,12 +1,11 @@
 -- KaBOM SQLite schema.
 --
--- Three tables, on purpose — see HOME-230 and CLAUDE.md: 27 files, one user.
--- Plain sqlite3, no ORM, no migrations. If this schema changes, drop the
--- database file and re-ingest; the source of truth is S3 and a full rebuild
--- takes seconds.
+-- Three tables, on purpose: a few dozen files, one user. Plain sqlite3, no
+-- ORM, no migrations. If this schema changes, drop the database file and
+-- re-ingest; the source of truth is S3 and a full rebuild takes seconds.
 --
--- This file must live on local-path storage, never smb-storage: SMB gives no
--- POSIX locking and SQLite corrupts on it (see CLAUDE.md's traps table).
+-- This file must live on storage with real POSIX locking. SMB/CIFS gives
+-- none, and SQLite corrupts on it — so node-local storage, never a NAS mount.
 
 PRAGMA foreign_keys = ON;
 

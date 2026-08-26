@@ -14,8 +14,8 @@ env.authMode = "{{ .Values.env.authMode }}"):
   KABOM_SESSION_SECRET                                   (authMode: google)
 {{- end }}
 
-This chart does not create that Secret — see infra-repo's SOPS-managed
-secret for KaBOM.
+This chart does not create that Secret. Whatever you already use to manage
+secrets keeps owning it.
 
 Check it came up:
 

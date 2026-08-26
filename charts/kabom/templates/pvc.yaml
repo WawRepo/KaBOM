@@ -1,10 +1,9 @@
 # Holds the SQLite database file (KABOM_DB_PATH, /data in the image).
 #
-# storageClass MUST be "local-path", never "smb-storage" — see
-# values.yaml's persistence comment and CLAUDE.md's traps table. SMB gives
-# no POSIX locking, so SQLite corrupts on it. This pins the single KaBOM
-# pod to whichever node local-path provisions the volume on; that is
-# accepted, not a bug (Immich's Postgres and Gitea make the same trade).
+# storageClass MUST provide real POSIX locking — see values.yaml's
+# persistence comment. SMB/CIFS gives none, so SQLite corrupts on it. A
+# node-local provisioner pins the single KaBOM pod to one node; that is
+# accepted, not a bug.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -1,8 +1,7 @@
 # Dev/test only — never part of the production image or the k8s deploy (see
-# CLAUDE.md, HOME-227's testing addendum, and HOME-232). Brings up KaBOM
-# against a local MinIO seeded with the committed sample CycloneDX files, so
-# there is a real, working instance to click through or point Playwright at
-# without ever touching the real storage-host MinIO.
+# the README). Brings up KaBOM against a local MinIO seeded with the
+# committed sample CycloneDX files, so there is a real, working instance to
+# click through or point Playwright at without ever touching your real MinIO.
 #
 # Usage:
 #   docker compose up --build            # every dev-sboms/ file plus one
