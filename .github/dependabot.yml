@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # pyproject.toml / uv.lock — routine version bumps and security fixes.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Workflow files under .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
