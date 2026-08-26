@@ -18,3 +18,11 @@ tests/e2e/playwright-report/
 
 # Local Claude Code instructions — private, not for the public repo.
 CLAUDE.md
+
+# Local docker-compose customisation. The override switches the stack to
+# Google auth and .env holds the real client secret; neither belongs in the
+# repo. Committing the override would also flip `docker compose up` to
+# Google mode for everyone and break the Playwright suite, which drives the
+# basic-auth login form. See the two .example files next to them.
+docker-compose.override.yml
+.env

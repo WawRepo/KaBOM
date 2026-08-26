@@ -115,6 +115,21 @@ API clients skip all of that and send `Authorization: Basic` on every
 request, which is what `curl -u user:pass https://kabom.example.com/api/status`
 already does. `/healthz` is the only route that needs nothing at all.
 
+To try Google sign-in against the local stack:
+
+```bash
+cp docker-compose.override.yml.example docker-compose.override.yml
+cp .env.example .env        # then fill in the client ID and secret
+docker compose up --build
+```
+
+Compose merges the override and reads `.env` on its own. Add
+`http://localhost:8090/auth/callback` to the client's authorized redirect
+URIs — Google special-cases localhost, so plain HTTP is fine there. Both
+files are gitignored: `.env` holds a real secret, and committing the
+override would flip everyone's `docker compose up` to Google mode and break
+the Playwright suite, which drives the basic-auth form.
+
 ## API
 
 ```

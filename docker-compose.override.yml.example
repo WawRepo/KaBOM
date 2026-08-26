@@ -1,0 +1,33 @@
+# Optional local override: run the compose stack against Google sign-in
+# instead of the built-in basic-auth login form.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   cp .env.example .env          # then fill in the real values
+#   docker compose up --build
+#
+# Compose merges `docker-compose.override.yml` on top of docker-compose.yml
+# automatically, and reads `.env` for the ${...} substitutions below — no
+# extra flags. Both files are gitignored: this one because committing it
+# would flip `docker compose up` to Google mode for everyone (and break the
+# Playwright suite, which drives the basic-auth form), and .env because it
+# holds a real client secret.
+#
+# In the Google Cloud console, under Clients -> your Web application client,
+# add this to "Authorized redirect URIs" alongside your production one:
+#
+#   http://localhost:8090/auth/callback
+#
+# Google special-cases localhost, so plain http is accepted there. The
+# session cookie survives plain http because docker-compose.yml already
+# sets KABOM_INSECURE_COOKIES=1 — dev only, never in a real deployment.
+
+services:
+  kabom:
+    environment:
+      KABOM_AUTH: google
+      KABOM_GOOGLE_CLIENT_ID: ${KABOM_GOOGLE_CLIENT_ID}
+      KABOM_GOOGLE_CLIENT_SECRET: ${KABOM_GOOGLE_CLIENT_SECRET}
+      # Comma-separated, exact addresses. Never a domain match, never "any
+      # Google account" — an OAuth app that accepts everyone looks
+      # identical to a working one.
+      KABOM_ALLOWED_EMAILS: ${KABOM_ALLOWED_EMAILS}
