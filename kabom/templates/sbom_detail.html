@@ -19,7 +19,7 @@
   </div>
   <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
     {{ sbom.components|length }} package{{ "" if sbom.components|length == 1 else "s" }}
-    · scanned {{ sbom.age_human }} ago
+    · {{ sbom.age_label }}
   </p>
 
   <!--

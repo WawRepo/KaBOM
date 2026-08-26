@@ -412,6 +412,21 @@ def _humanize_age(seconds: float | None) -> str:
     return f"{n} day{'s' if n != 1 else ''}"
 
 
+def _age_label(seconds: float | None) -> str:
+    """A whole phrase for an sbom's age, not a duration to wrap in "… ago".
+
+    _humanize_age returns "unknown" and "just now", neither of which reads
+    as a duration — "scanned just now ago" and, worse, "scanned unknown
+    ago", where an unknown age is exactly the case that should read as
+    alarming rather than as a typo.
+    """
+    if seconds is None:
+        return "age unknown — treat as stale"
+    if seconds < 60:
+        return "scanned just now"
+    return f"scanned {_humanize_age(seconds)} ago"
+
+
 def _freshness_banner(status: dict) -> dict:
     """Turn /api/status's raw numbers into what the banner shows.
 
@@ -518,7 +533,12 @@ def sbom_detail_page(
     if row is None:
         raise HTTPException(status_code=404, detail=f"No sbom with id {sbom_id}")
 
-    sbom = {**row, "age_human": _humanize_age(_age_seconds(row["generated_at"]))}
+    age_seconds = _age_seconds(row["generated_at"])
+    sbom = {
+        **row,
+        "age_human": _humanize_age(age_seconds),
+        "age_label": _age_label(age_seconds),
+    }
     return templates.TemplateResponse(
         request, "sbom_detail.html", {"sbom": sbom, "banner": banner, "active_nav": "/sboms"}
     )
@@ -551,13 +571,19 @@ def _safe_next(raw: str | None) -> str:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str | None = None) -> HTMLResponse:
-    """The sign-in form. In google mode there is nothing to type, so this
-    just points at the OAuth flow instead of showing a password field."""
+    """The sign-in page, in both modes.
+
+    Google mode shows a button rather than bouncing straight to the OAuth
+    flow. Auto-redirecting looks tidier and breaks sign-out: /logout clears
+    the session, lands here, gets sent to Google, and Google's own still-live
+    SSO session signs the user straight back in without a prompt — so the
+    button appears to do nothing at all.
+    """
     mode = auth.load_auth_mode()
-    if mode == "google":
-        return RedirectResponse(url="/auth/login", status_code=303)
     return templates.TemplateResponse(
-        request, "login.html", {"next": _safe_next(next), "error": None}
+        request,
+        "login.html",
+        {"next": _safe_next(next), "error": None, "mode": mode},
     )
 
 
@@ -580,7 +606,7 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"next": target, "error": "Incorrect username or password."},
+            {"next": target, "error": "Incorrect username or password.", "mode": "basic"},
             status_code=401,
         )
 
@@ -591,7 +617,13 @@ def login_submit(
 @app.post("/logout")
 def logout_submit(request: Request) -> RedirectResponse:
     """POST, not GET: a link a browser can prefetch should not be able to
-    sign someone out."""
+    sign someone out.
+
+    Works in both modes. Note this ends the KaBOM session only — it cannot
+    end the visitor's Google session, which is why /login shows a button in
+    google mode rather than redirecting: otherwise signing out would bounce
+    through Google's still-live SSO and sign them straight back in.
+    """
     request.session.clear()
     return RedirectResponse(url="/login", status_code=303)
 

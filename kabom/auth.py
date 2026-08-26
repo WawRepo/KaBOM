@@ -151,10 +151,24 @@ def _redirect_to_login(request: Request) -> HTTPException:
     target = request.url.path
     if request.url.query:
         target = f"{target}?{request.url.query}"
+    location = f"/login?next={quote(target, safe='')}"
+
+    # An htmx request follows a 303 transparently and then swaps the login
+    # page into whatever it was targeting — on the search box that means
+    # hx-select finds no #search-results and silently deletes the results
+    # div mid-keystroke. HX-Redirect tells htmx to navigate the whole page
+    # instead, which is what a session expiring should look like.
+    if request.headers.get("HX-Request"):
+        return HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"HX-Redirect": location},
+        )
+
     return HTTPException(
         status_code=status.HTTP_303_SEE_OTHER,
         detail="Not authenticated",
-        headers={"Location": f"/login?next={quote(target, safe='')}"},
+        headers={"Location": location},
     )
 
 
@@ -189,7 +203,15 @@ def _check_basic_auth(request: Request, credentials: HTTPBasicCredentials | None
     API client sends `Authorization: Basic` on every request and never
     touches the session. Both end up here, and either is sufficient.
     """
-    if request.session.get("user"):
+    # Revalidated against the CURRENT configured username, not just checked
+    # for truthiness: rotate KABOM_BASIC_USER (or the hash, which is only
+    # ever changed alongside it) and existing cookies stop working on the
+    # next request instead of outliving the rotation by the session
+    # cookie's lifetime. Google mode re-checks its allow-list the same way.
+    session_user = request.session.get("user")
+    if session_user and secrets.compare_digest(
+        str(session_user).encode("utf-8"), load_basic_auth_config().username.encode("utf-8")
+    ):
         return
     if credentials is not None and check_basic_credentials(
         credentials.username, credentials.password
@@ -328,6 +350,8 @@ def _check_google_session(request: Request) -> None:
     config = load_google_auth_config()
     email = request.session.get("email")
     if not email or email not in config.allowed_emails:
+        if _wants_html(request):
+            raise _redirect_to_login(request)
         raise _unauthorized("Not authenticated")
 
 

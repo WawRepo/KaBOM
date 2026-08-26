@@ -45,6 +45,10 @@ spec:
               value: {{ .Values.env.refreshMinutes | quote }}
             - name: KABOM_AUTH
               value: {{ .Values.env.authMode | quote }}
+            {{- if .Values.insecureCookies }}
+            - name: KABOM_INSECURE_COOKIES
+              value: "1"
+            {{- end }}
             {{- if eq .Values.env.authMode "google" }}
             - name: KABOM_ALLOWED_EMAILS
               value: {{ .Values.env.allowedEmails | quote }}

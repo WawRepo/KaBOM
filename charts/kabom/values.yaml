@@ -19,6 +19,9 @@ ingress:
   # TLS is off by default so `helm template`/`helm install` work with no
   # overrides. Turn it on and point secretName at whatever cert-manager (or
   # your own secret) provides the certificate for the real host.
+  #
+  # If you leave TLS off, read `insecureCookies` below — the login session
+  # cookie will not survive plain HTTP without it.
   tls:
     enabled: false
     secretName: ""
@@ -45,6 +48,18 @@ persistence:
   storageClass: local-path
   size: 1Gi
   accessMode: ReadWriteOnce
+
+# Drops the `Secure` flag from the login session cookie, so it works over
+# plain HTTP. Leave this false for anything real.
+#
+# It exists because the failure without it is silent and baffling: over
+# HTTP the browser accepts the cookie at login, refuses to send it back,
+# and every request bounces to /login again with nothing in the logs. If
+# you are serving KaBOM over HTTP (ingress.tls.enabled: false, no TLS
+# terminating in front), you need this — and you should prefer fixing the
+# TLS instead, since without it the session cookie crosses the network in
+# clear text.
+insecureCookies: false
 
 # Plain (non-secret) KABOM_* environment variables. Actual credentials
 # (S3 keys, the basic-auth password hash, Google OAuth client secret, the

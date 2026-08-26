@@ -6,11 +6,11 @@ description: >-
 type: application
 
 # Chart version: bump this when charts/kabom/** changes.
-version: 0.1.0
+version: 0.2.0
 
 # App version: informational only (shown by `helm list`); the actual image
 # tag deployed is controlled by values.image.tag, not this field.
-appVersion: "0.1.0"
+appVersion: "0.2.0"
 
 # Deliberately no chart repository (ChartMuseum, OCI registry, etc.) — one
 # chart, referenced by local path or straight from the GitHub repo.

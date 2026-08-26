@@ -249,6 +249,51 @@ def test_login_refuses_to_redirect_off_site(monkeypatch, tmp_path, fresh_main, h
     assert posted.headers["location"] == "/"
 
 
+def test_session_stops_working_when_the_username_is_rotated(monkeypatch, tmp_path, fresh_main):
+    """A session cookie is not a bearer token that outlives its credentials.
+
+    Rotate the configured identity after a leak and existing cookies must
+    stop working on the very next request, not linger for the cookie's
+    lifetime.
+    """
+    _basic_env(monkeypatch, tmp_path)
+    main = fresh_main()
+    conn = db.get_connection(str(tmp_path / "kabom.sqlite3"))
+    db.init_db(conn)
+    main.app.dependency_overrides[main.get_db_connection] = lambda: (yield conn)
+    try:
+        client = _client(main)
+        client.post(
+            "/login",
+            data={"username": FAKE_USERNAME, "password": FAKE_PASSWORD, "next": "/"},
+            follow_redirects=False,
+        )
+        # The session works...
+        assert client.get("/api/status").status_code == 200
+
+        monkeypatch.setenv("KABOM_BASIC_USER", "someone-else-entirely")
+
+        # ...and stops working the moment the identity behind it changes.
+        assert client.get("/api/status").status_code == 401
+    finally:
+        main.app.dependency_overrides.clear()
+        conn.close()
+
+
+def test_htmx_request_gets_hx_redirect_not_a_bare_303(monkeypatch, tmp_path, fresh_main):
+    """htmx follows a 303 transparently and swaps the login page into
+    whatever it was targeting — on the search box that silently deletes the
+    results. HX-Redirect makes it navigate instead."""
+    _basic_env(monkeypatch, tmp_path)
+    client = _client(fresh_main())
+
+    response = client.get("/", headers={"HX-Request": "true"}, follow_redirects=False)
+
+    assert response.status_code == 401
+    assert response.headers["hx-redirect"].startswith("/login?next=")
+    assert "location" not in response.headers
+
+
 def test_logout_clears_the_session(monkeypatch, tmp_path, fresh_main):
     _basic_env(monkeypatch, tmp_path)
     client = _client(fresh_main())
@@ -381,9 +426,13 @@ def test_google_login_outside_allowlist_is_refused_after_successful_exchange(
 
     assert callback_response.status_code == 403
 
-    # And no session was established: a protected route still 401s.
-    protected_response = client.get("/")
-    assert protected_response.status_code == 401
+    # And no session was established. A browser route now lands on the
+    # login page rather than a raw JSON 401 — still refused, just with a
+    # way back in — while the API keeps answering 401.
+    page = client.get("/", follow_redirects=False)
+    assert page.status_code == 303
+    assert page.headers["location"].startswith("/login")
+    assert client.get("/api/status").status_code == 401
 
 
 def test_google_login_unverified_email_is_refused(monkeypatch, tmp_path, fresh_main):

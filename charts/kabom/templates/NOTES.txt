@@ -17,6 +17,19 @@ env.authMode = "{{ .Values.env.authMode }}"):
 This chart does not create that Secret. Whatever you already use to manage
 secrets keeps owning it.
 
+  !! Upgrading from chart 0.1.x: KABOM_SESSION_SECRET is now required in
+     BOTH auth modes, not just google — basic auth gained a login page and
+     a signed session. Add it to the Secret before upgrading, or the pod
+     will CrashLoopBackOff on startup.
+{{- if and (not .Values.ingress.tls.enabled) (not .Values.insecureCookies) }}
+
+  !! ingress.tls.enabled is false and insecureCookies is false. The login
+     session cookie is marked Secure, so over plain HTTP the browser will
+     not send it back and signing in will loop on the login page with
+     nothing in the logs. Enable TLS (preferred) or set
+     insecureCookies=true.
+{{- end }}
+
 Check it came up:
 
   kubectl get pods -l app.kubernetes.io/name=kabom
