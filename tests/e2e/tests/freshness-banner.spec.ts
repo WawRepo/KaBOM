@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { login } from "../helpers";
 
 // Which of the three banner colours to expect depends on which scenario
 // scripts/seed_minio.py seeded the compose stack with — set by run-e2e.sh
@@ -8,6 +9,10 @@ import { test, expect } from "@playwright/test";
 const scenario = process.env.KABOM_SEED_SCENARIO || "mixed";
 
 test.describe(`freshness banner — scenario "${scenario}"`, () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
   test("banner shows the expected colour and, when stale, the failure warning", async ({
     page,
   }) => {

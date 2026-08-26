@@ -69,6 +69,9 @@ def _basic_env(monkeypatch, tmp_path):
     monkeypatch.setenv("KABOM_AUTH", "basic")
     monkeypatch.setenv("KABOM_BASIC_USER", FAKE_USERNAME)
     monkeypatch.setenv("KABOM_BASIC_PASSWORD_HASH", FAKE_PASSWORD_HASH)
+    # Basic mode signs a login-session cookie too now, so it needs this in
+    # exactly the same way google mode does.
+    monkeypatch.setenv("KABOM_SESSION_SECRET", FAKE_SESSION_SECRET)
     # Defensive: even though auth should reject these requests before any
     # handler touches the database, point KABOM_DB_PATH at a throwaway file
     # rather than risk a stray kabom.sqlite3 landing in the repo root if
@@ -76,76 +79,210 @@ def _basic_env(monkeypatch, tmp_path):
     monkeypatch.setenv("KABOM_DB_PATH", str(tmp_path / "kabom.sqlite3"))
 
 
+def _client(main) -> TestClient:
+    """A TestClient over https.
+
+    The session cookie is marked Secure (kabom/main.py only relaxes that
+    behind KABOM_INSECURE_COOKIES, for local http dev), so a plain
+    http://testserver client would silently never send it back and every
+    session assertion below would pass for the wrong reason.
+    """
+    return TestClient(main.app, base_url="https://testserver")
+
+
 # --- KABOM_AUTH=basic ---------------------------------------------------------
+#
+# These use the `fresh_main` fixture (defined further down) for the same
+# reason the google tests do: kabom/main.py attaches SessionMiddleware once,
+# at import time, and basic mode now needs it for the login session.
 
 
-def test_healthz_needs_no_auth_even_in_basic_mode(monkeypatch, tmp_path):
+def test_healthz_needs_no_auth_even_in_basic_mode(monkeypatch, tmp_path, fresh_main):
     _basic_env(monkeypatch, tmp_path)
+    main = fresh_main()
 
-    response = TestClient(app).get("/healthz")
+    response = _client(main).get("/healthz")
 
     assert response.status_code == 200
 
 
-@pytest.mark.parametrize("method,path,kwargs", PROTECTED_ROUTES)
-def test_every_protected_route_returns_401_without_credentials(
-    monkeypatch, tmp_path, method, path, kwargs
+API_ROUTES = [r for r in PROTECTED_ROUTES if r[1].startswith(("/api", "/admin"))]
+PAGE_ROUTES = [r for r in PROTECTED_ROUTES if not r[1].startswith(("/api", "/admin"))]
+
+
+@pytest.mark.parametrize("method,path,kwargs", API_ROUTES)
+def test_api_routes_return_401_without_credentials(
+    monkeypatch, tmp_path, fresh_main, method, path, kwargs
 ):
     _basic_env(monkeypatch, tmp_path)
-    client = TestClient(app)
+    client = _client(fresh_main())
 
     response = client.request(method, path, **kwargs)
 
     assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Basic"
+    # Deliberately no WWW-Authenticate: that header is what makes a browser
+    # raise its native credentials popup, which the login page replaces.
+    assert "www-authenticate" not in response.headers
 
 
-def test_wrong_password_is_rejected(monkeypatch, tmp_path):
+@pytest.mark.parametrize("method,path,kwargs", PAGE_ROUTES)
+def test_page_routes_redirect_to_login_without_credentials(
+    monkeypatch, tmp_path, fresh_main, method, path, kwargs
+):
     _basic_env(monkeypatch, tmp_path)
-    client = TestClient(app)
+    client = _client(fresh_main())
+
+    response = client.request(method, path, follow_redirects=False, **kwargs)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/login?next=")
+    assert "www-authenticate" not in response.headers
+
+
+def test_wrong_password_is_rejected(monkeypatch, tmp_path, fresh_main):
+    _basic_env(monkeypatch, tmp_path)
+    client = _client(fresh_main())
 
     response = client.get("/api/status", auth=(FAKE_USERNAME, "not the password"))
 
     assert response.status_code == 401
 
 
-def test_wrong_username_is_rejected(monkeypatch, tmp_path):
+def test_wrong_username_is_rejected(monkeypatch, tmp_path, fresh_main):
     _basic_env(monkeypatch, tmp_path)
-    client = TestClient(app)
+    client = _client(fresh_main())
 
     response = client.get("/api/status", auth=("someone-else", FAKE_PASSWORD))
 
     assert response.status_code == 401
 
 
-def test_correct_credentials_are_admitted(monkeypatch, tmp_path):
+def test_correct_credentials_are_admitted(monkeypatch, tmp_path, fresh_main):
+    """An API client sending `Authorization: Basic` never touches the login
+    form or the session — the header alone is enough, on every request."""
     _basic_env(monkeypatch, tmp_path)
+    main = fresh_main()
     conn = db.get_connection(str(tmp_path / "kabom.sqlite3"))
     db.init_db(conn)
-    app.dependency_overrides[get_db_connection] = lambda: (yield conn)
+    main.app.dependency_overrides[main.get_db_connection] = lambda: (yield conn)
     try:
-        client = TestClient(app)
-
-        response = client.get("/api/status", auth=(FAKE_USERNAME, FAKE_PASSWORD))
-
+        response = _client(main).get("/api/status", auth=(FAKE_USERNAME, FAKE_PASSWORD))
         assert response.status_code == 200
     finally:
-        app.dependency_overrides.pop(get_db_connection, None)
+        main.app.dependency_overrides.clear()
         conn.close()
 
 
-def test_no_secret_value_appears_in_response_body_or_logs(monkeypatch, tmp_path, caplog):
+# --- the login form ----------------------------------------------------------
+
+
+def test_login_page_renders_a_form(monkeypatch, tmp_path, fresh_main):
     _basic_env(monkeypatch, tmp_path)
-    client = TestClient(app)
+
+    response = _client(fresh_main()).get("/login")
+
+    assert response.status_code == 200
+    assert 'name="username"' in response.text
+    assert 'name="password"' in response.text
+
+
+def test_login_with_correct_credentials_starts_a_session(monkeypatch, tmp_path, fresh_main):
+    """The whole point of the form: sign in once, then browse without
+    re-sending credentials on every request."""
+    _basic_env(monkeypatch, tmp_path)
+    main = fresh_main()
+    conn = db.get_connection(str(tmp_path / "kabom.sqlite3"))
+    db.init_db(conn)
+    main.app.dependency_overrides[main.get_db_connection] = lambda: (yield conn)
+    try:
+        client = _client(main)
+
+        posted = client.post(
+            "/login",
+            data={"username": FAKE_USERNAME, "password": FAKE_PASSWORD, "next": "/"},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303
+        assert posted.headers["location"] == "/"
+
+        # The TestClient keeps the session cookie, so this carries no
+        # credentials of its own.
+        assert client.get("/api/status").status_code == 200
+    finally:
+        main.app.dependency_overrides.clear()
+        conn.close()
+
+
+def test_login_with_wrong_password_does_not_start_a_session(monkeypatch, tmp_path, fresh_main):
+    _basic_env(monkeypatch, tmp_path)
+    client = _client(fresh_main())
+
+    posted = client.post(
+        "/login",
+        data={"username": FAKE_USERNAME, "password": "wrong", "next": "/"},
+        follow_redirects=False,
+    )
+
+    assert posted.status_code == 401
+    assert "Incorrect username or password" in posted.text
+    # And no session was established by the failed attempt.
+    assert client.get("/api/status").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "hostile_next",
+    ["https://evil.example/steal", "//evil.example/steal", "javascript:alert(1)"],
+)
+def test_login_refuses_to_redirect_off_site(monkeypatch, tmp_path, fresh_main, hostile_next):
+    """`next` comes straight from the query string, so a login form that
+    honours it blindly is an open redirect."""
+    _basic_env(monkeypatch, tmp_path)
+    client = _client(fresh_main())
+
+    posted = client.post(
+        "/login",
+        data={"username": FAKE_USERNAME, "password": FAKE_PASSWORD, "next": hostile_next},
+        follow_redirects=False,
+    )
+
+    assert posted.status_code == 303
+    assert posted.headers["location"] == "/"
+
+
+def test_logout_clears_the_session(monkeypatch, tmp_path, fresh_main):
+    _basic_env(monkeypatch, tmp_path)
+    client = _client(fresh_main())
+    client.post(
+        "/login",
+        data={"username": FAKE_USERNAME, "password": FAKE_PASSWORD, "next": "/"},
+        follow_redirects=False,
+    )
+
+    client.post("/logout", follow_redirects=False)
+
+    assert client.get("/api/status").status_code == 401
+
+
+def test_no_secret_value_appears_in_response_body_or_logs(
+    monkeypatch, tmp_path, fresh_main, caplog
+):
+    _basic_env(monkeypatch, tmp_path)
+    client = _client(fresh_main())
 
     with caplog.at_level("DEBUG"):
         response = client.get("/api/status", auth=(FAKE_USERNAME, "wrong-password"))
+        form = client.post(
+            "/login",
+            data={"username": FAKE_USERNAME, "password": "wrong-password", "next": "/"},
+            follow_redirects=False,
+        )
 
     assert response.status_code == 401
-    assert FAKE_PASSWORD_HASH not in response.text
-    assert FAKE_PASSWORD not in response.text
-    assert FAKE_PASSWORD_HASH not in caplog.text
-    assert FAKE_PASSWORD not in caplog.text
+    assert form.status_code == 401
+    for body in (response.text, form.text, caplog.text):
+        assert FAKE_PASSWORD_HASH not in body
+        assert FAKE_PASSWORD not in body
+        assert FAKE_SESSION_SECRET not in body
 
 
 def test_missing_kabom_auth_is_a_clear_error_not_a_silent_bypass(monkeypatch, tmp_path):

@@ -14,13 +14,10 @@ export default defineConfig({
   use: {
     baseURL: process.env.KABOM_BASE_URL || "http://localhost:8090",
     trace: "retain-on-failure",
-    // HOME-233: every route needs basic auth now. Fixed, dev-only
-    // credentials matching docker-compose.yml's `kabom` service — never a
-    // real credential, never valid against anything but this compose stack.
-    httpCredentials: {
-      username: "kabom-dev",
-      password: "kabom-dev-only-not-a-real-password",
-    },
+    // No `httpCredentials` here on purpose: KaBOM never sends a
+    // `WWW-Authenticate` challenge, so there is nothing for Playwright to
+    // respond to. Each spec signs in through the real form instead — see
+    // helpers.ts.
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },

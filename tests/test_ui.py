@@ -12,6 +12,7 @@ are proven fast and in normal `pytest`/CI, without docker or a browser.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -241,10 +242,22 @@ def test_index_page_no_matches_message(client, conn, monkeypatch):
 
     response = client.get("/", params={"q": "nothing-like-this-exists"})
 
-    assert "No matches for" in response.text
+    assert "No match for" in response.text
 
 
 # --- /sboms: sorted oldest first ---------------------------------------------
+
+
+def _card_position(html: str, subject: str) -> int:
+    """Where `subject`'s inventory card appears in the rendered page.
+
+    Matches the subject as the card's own rendered text, so the assertion
+    survives the surrounding markup changing shape — which it has, and
+    ">subject<" did not.
+    """
+    match = re.search(rf">\s*{re.escape(subject)}\s*<", html)
+    assert match is not None, f"no inventory card rendered for {subject!r}"
+    return match.start()
 
 
 def test_sboms_page_sorted_oldest_first(client, conn, monkeypatch):
@@ -262,11 +275,12 @@ def test_sboms_page_sorted_oldest_first(client, conn, monkeypatch):
     response = client.get("/sboms")
 
     assert response.status_code == 200
-    # ">subject<" (the card's rendered name), not a bare substring match —
-    # the page's own instructional copy above the cards also contains the
-    # word "oldest".
+    # Anchor on each card's own link, not a bare substring match — the
+    # page's instructional copy above the cards also contains the word
+    # "oldest", and the subject text itself sits inside nested markup.
     positions = {
-        subject: response.text.index(f">{subject}<") for subject in ("oldest", "middle", "newest")
+        subject: _card_position(response.text, subject)
+        for subject in ("oldest", "middle", "newest")
     }
     assert positions["oldest"] < positions["middle"] < positions["newest"]
 
@@ -284,7 +298,7 @@ def test_sboms_page_treats_unknown_age_as_oldest(client, conn, monkeypatch):
 
     response = client.get("/sboms")
 
-    assert response.text.index(">unknown-age<") < response.text.index(">known<")
+    assert _card_position(response.text, "unknown-age") < _card_position(response.text, "known")
 
 
 # --- /sboms/{id}: full contents, filterable client-side ----------------------

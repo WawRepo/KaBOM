@@ -3,38 +3,60 @@
   + hx-swap="outerHTML" in index.html) as well as rendered as part of a full
   page load — one template, one source of truth for both paths.
 
-  The red border below is the other half of the freshness requirement: when the banner is RED, the warning must also sit right next
-  to the answer, not only at the top of the page.
+  The red border below is the other half of the freshness requirement: when
+  the banner is RED, the warning must also sit right next to the answer, not
+  only at the top of the page.
 -->
 <div
   id="search-results"
   data-testid="search-results"
   class="mt-6
-    {% if banner.level == 'red' %}rounded-lg border-2 border-red-600 p-3{% endif %}"
+    {% if banner.level == 'red' %}rounded-2xl border-2 border-red-600 p-4{% endif %}"
 >
   {% if q %}
     {% if groups %}
-      <ul class="divide-y divide-slate-200 dark:divide-slate-700">
+      {% if banner.level == 'red' %}
+        <p class="mb-4 flex items-center gap-2 text-sm font-semibold text-red-700 dark:text-red-400">
+          <svg aria-hidden="true" class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" />
+          </svg>
+          Data is stale — these results may be incomplete.
+        </p>
+      {% endif %}
+
+      <div class="space-y-3">
         {% for group in groups %}
-          <li class="py-3">
-            <div class="font-semibold">{{ group.name }}</div>
-            <ul class="mt-1 space-y-1 text-sm text-slate-700 dark:text-slate-300">
+          <section class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <h2 class="flex items-baseline gap-2 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+              <span class="font-mono text-sm font-semibold">{{ group.name }}</span>
+              <span class="text-xs text-slate-500 dark:text-slate-400">
+                {{ group.rows | length }} place{{ "" if group.rows | length == 1 else "s" }}
+              </span>
+            </h2>
+            <ul class="divide-y divide-slate-100 text-sm dark:divide-slate-800">
               {% for row in group.rows %}
-                <li class="flex flex-wrap items-baseline justify-between gap-x-4">
-                  <span>
-                    {{ row.subject }}
-                    <span class="text-xs uppercase text-slate-500">({{ row.kind }})</span>
+                <li class="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-2.5">
+                  <span class="flex min-w-0 items-baseline gap-2">
+                    <span class="truncate font-medium">{{ row.subject }}</span>
+                    <span class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                      {{ row.kind }}
+                    </span>
                   </span>
-                  <span class="font-mono">{{ row.version or "—" }}</span>
-                  <span class="text-slate-500">{{ row.age_human }} old</span>
+                  <span class="ml-auto font-mono text-slate-700 dark:text-slate-300">{{ row.version or "—" }}</span>
+                  <span class="w-28 shrink-0 text-right text-xs text-slate-500 dark:text-slate-400">{{ row.age_human }} old</span>
                 </li>
               {% endfor %}
             </ul>
-          </li>
+          </section>
         {% endfor %}
-      </ul>
+      </div>
     {% else %}
-      <p class="text-slate-500">No matches for &ldquo;{{ q }}&rdquo;.</p>
+      <div class="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center dark:border-slate-700">
+        <p class="font-medium">No match for &ldquo;{{ q }}&rdquo;.</p>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Nothing ingested contains that package{% if banner.level == 'red' %} — though the data is stale, so treat that as unconfirmed{% endif %}.
+        </p>
+      </div>
     {% endif %}
   {% endif %}
 </div>

@@ -5,19 +5,24 @@ auth" mode: this app has no business being reachable, even inside the
 homelab, without a check on who is asking. `basic` is meant to be finished,
 not a placeholder — it may be the only mode this app ever runs in.
 
-- **basic**: HTTP Basic auth. Username from `KABOM_BASIC_USER`, password
-  checked against a bcrypt hash from `KABOM_BASIC_PASSWORD_HASH` — never a
-  plaintext password in an environment variable: it would land in
-  `docker inspect` and in the pod spec. Stateless: every request carries
-  its own credentials, so there is no session and therefore no need for
-  `KABOM_SESSION_SECRET`.
+- **basic**: username from `KABOM_BASIC_USER`, password checked against a
+  bcrypt hash from `KABOM_BASIC_PASSWORD_HASH` — never a plaintext password
+  in an environment variable: it would land in `docker inspect` and in the
+  pod spec. Two ways in, both accepted: a person signs in once at `/login`
+  and gets a signed session cookie, while an API client sends
+  `Authorization: Basic` on every request and never touches the session.
+  Nothing ever sends `WWW-Authenticate`, so browsers never raise their
+  native credentials popup.
 - **google**: authlib's standard OAuth2 authorization-code flow against
   Google, gated by an explicit email allow-list (`KABOM_ALLOWED_EMAILS`),
   with Google's `email_verified` claim checked. The session lives in a
   signed cookie (Starlette's `SessionMiddleware`, backed by itsdangerous),
-  which needs `KABOM_SESSION_SECRET`. The app refuses to start rather than
-  generate one: a secret minted at boot invalidates every session on restart, which gets "fixed" by
-  someone hardcoding one.
+  which needs `KABOM_SESSION_SECRET`.
+
+Both modes therefore need `KABOM_SESSION_SECRET`, and the app refuses to
+start without it rather than generate one: a secret minted at boot
+invalidates every session on restart, which gets "fixed" by someone
+hardcoding one.
 
 Every function here reads the environment fresh on each call rather than
 caching at import time, matching kabom.config's style — env vars are cheap
@@ -31,6 +36,7 @@ import logging
 import os
 import secrets
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import bcrypt
 from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
@@ -125,27 +131,73 @@ def _verify_password(password: str, stored_hash: bytes) -> bool:
 
 
 def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
+    """A plain 401, deliberately WITHOUT a `WWW-Authenticate: Basic` header.
+
+    That header is what makes a browser throw up its native credentials
+    popup, which is the opposite of what the login page exists for. API
+    clients do not need it: curl's `-u` and every HTTP library send Basic
+    credentials preemptively rather than waiting to be challenged.
+    """
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+
+
+def _redirect_to_login(request: Request) -> HTTPException:
+    """Send a browser to the login page instead of 401-ing at it.
+
+    `next` carries where they were headed so login can put them back there,
+    and is validated on the way out (see kabom.main.login) — an open
+    redirect is exactly the kind of thing a login form invites.
+    """
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
     return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=detail,
-        headers={"WWW-Authenticate": "Basic"},
+        status_code=status.HTTP_303_SEE_OTHER,
+        detail="Not authenticated",
+        headers={"Location": f"/login?next={quote(target, safe='')}"},
     )
 
 
-def _check_basic_auth(credentials: HTTPBasicCredentials | None) -> None:
-    if credentials is None:
-        raise _unauthorized()
+def _wants_html(request: Request) -> bool:
+    """Whether to redirect to the login page or answer 401.
 
+    Path-based rather than Accept-header-based: `/api/*` and `/admin/*` are
+    for programs and should get a status code they can act on, everything
+    else is a page a person is looking at.
+    """
+    path = request.url.path
+    return not (path.startswith("/api") or path.startswith("/admin"))
+
+
+def check_basic_credentials(username: str, password: str) -> bool:
+    """Constant-time check of one username/password pair against the
+    configured basic-auth identity. Used by both the login form and the
+    `Authorization: Basic` header path."""
     config = load_basic_auth_config()
     # Both checks always run — not `username_ok and then check password` —
     # so a wrong username takes exactly as long as a wrong password. With
     # one user this is not a rich target, but it costs nothing to do right.
-    username_ok = secrets.compare_digest(
-        credentials.username.encode("utf-8"), config.username.encode("utf-8")
-    )
-    password_ok = _verify_password(credentials.password, config.password_hash)
-    if not (username_ok and password_ok):
-        raise _unauthorized("Incorrect username or password")
+    username_ok = secrets.compare_digest(username.encode("utf-8"), config.username.encode("utf-8"))
+    password_ok = _verify_password(password, config.password_hash)
+    return username_ok and password_ok
+
+
+def _check_basic_auth(request: Request, credentials: HTTPBasicCredentials | None) -> None:
+    """Authenticate a request in `basic` mode, by either route.
+
+    A browser signs in once at /login and gets a signed session cookie; an
+    API client sends `Authorization: Basic` on every request and never
+    touches the session. Both end up here, and either is sufficient.
+    """
+    if request.session.get("user"):
+        return
+    if credentials is not None and check_basic_credentials(
+        credentials.username, credentials.password
+    ):
+        return
+    if _wants_html(request):
+        raise _redirect_to_login(request)
+    raise _unauthorized("Incorrect username or password")
 
 
 # --- google oauth --------------------------------------------------------
@@ -160,11 +212,12 @@ class GoogleAuthConfig:
 
 
 def load_session_secret() -> str:
-    """`KABOM_SESSION_SECRET`, required whenever session-cookie signing is in
-    play (at minimum, whenever `KABOM_AUTH=google`). Never generated — see
-    a secret minted at boot. Basic auth is stateless (every
-    request re-sends its own credentials), so it does not need this at all;
-    only google mode's signed session cookie does.
+    """`KABOM_SESSION_SECRET`, required in both auth modes.
+
+    Both modes sign a session cookie now: google mode after the OAuth
+    callback, basic mode after the login form. Never generated — a secret
+    minted at boot logs everyone out on every restart, which is what gets
+    "fixed" later by hardcoding one.
     """
     secret = os.environ.get("KABOM_SESSION_SECRET")
     if not secret:
@@ -230,6 +283,8 @@ def validate_startup_config() -> None:
     per-request 500 discovered by whoever happens to hit the API first.
     """
     mode = load_auth_mode()
+    # Both modes sign a session cookie, so both need the secret.
+    load_session_secret()
     if mode == "basic":
         load_basic_auth_config()
     else:
@@ -292,6 +347,6 @@ async def require_auth(
     """
     mode = load_auth_mode()
     if mode == "basic":
-        _check_basic_auth(credentials)
+        _check_basic_auth(request, credentials)
     else:
         _check_google_session(request)

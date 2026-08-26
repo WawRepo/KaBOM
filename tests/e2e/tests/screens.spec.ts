@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { login } from "../helpers";
 
 // Runs against whichever seed scenario docker-compose currently has up (see
 // run-e2e.sh). These assertions hold regardless of scenario, and regardless
@@ -7,6 +8,10 @@ import { test, expect } from "@playwright/test";
 // and exactly one package named `zlib`.
 
 test.describe("the three screens", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
   test("/ — search box is focused on load and works with the keyboard alone", async ({
     page,
   }) => {

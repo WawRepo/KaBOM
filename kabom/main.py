@@ -39,7 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from authlib.integrations.starlette_client import OAuthError
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -126,28 +126,33 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="KaBOM", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="static")
 
-# --- HOME-233: auth ----------------------------------------------------------
+# --- auth --------------------------------------------------------------------
 #
-# Session-cookie signing is only ever in play for KABOM_AUTH=google (basic
-# auth is stateless — see kabom/auth.py's module docstring). Read directly
-# from the environment here, at import time, rather than through
+# Both modes sign a session cookie now: google mode after the OAuth
+# callback, basic mode after the login form. Read KABOM_AUTH directly from
+# the environment here, at import time, rather than through
 # auth.load_auth_mode(): that function raises on anything but "basic" or
-# "google", and importing this module must stay safe for basic mode, google
-# mode, AND for every other test in this repo that imports kabom.main
-# without setting KABOM_AUTH at all (they never hit an auth-checking route).
+# "google", and importing this module must stay safe for both modes AND for
+# every test in this repo that imports kabom.main without setting KABOM_AUTH
+# at all (they override the auth dependency instead).
 #
 # This is deliberately the "refuse to start" moment for a missing
-# KABOM_SESSION_SECRET when google mode is selected: raising here stops
-# `uvicorn kabom.main:app` (and `import kabom.main`) dead, before a single
-# request can be served — not a generated secret, not a per-request 500
-# discovered later.
-if os.environ.get("KABOM_AUTH") == "google":
-    _google_config = auth.load_google_auth_config()
+# KABOM_SESSION_SECRET: raising here stops `uvicorn kabom.main:app` (and
+# `import kabom.main`) dead, before a single request can be served — not a
+# generated secret, not a per-request 500 discovered later.
+if os.environ.get("KABOM_AUTH") in ("basic", "google"):
+    # `https_only` marks the cookie Secure, so a browser will not send it
+    # back over plain HTTP. That is what production wants and what
+    # docker-compose on http://localhost cannot live with — without the
+    # opt-out, logging in there would appear to succeed and then silently
+    # bounce straight back to the login page. Secure by default, explicit
+    # to turn off, and never turned off anywhere but local dev.
+    _insecure_cookies = os.environ.get("KABOM_INSECURE_COOKIES") == "1"
     app.add_middleware(
         SessionMiddleware,
-        secret_key=_google_config.session_secret,
+        secret_key=auth.load_session_secret(),
         same_site="lax",
-        https_only=True,
+        https_only=not _insecure_cookies,
     )
 
 # Every route below except GET /healthz is registered on this router, whose
@@ -471,7 +476,9 @@ def index_page(
         groups = [{"name": name, "rows": by_name[name]} for name in sorted(by_name)]
 
     return templates.TemplateResponse(
-        request, "index.html", {"q": q, "groups": groups, "banner": banner}
+        request,
+        "index.html",
+        {"q": q, "groups": groups, "banner": banner, "active_nav": "/"},
     )
 
 
@@ -491,7 +498,9 @@ def sboms_page(
     sboms = [{**row, "age_human": _humanize_age(_age_seconds(row["generated_at"]))} for row in rows]
     sboms.sort(key=lambda s: _age_seconds(s["generated_at"]) or float("inf"), reverse=True)
 
-    return templates.TemplateResponse(request, "sboms.html", {"sboms": sboms, "banner": banner})
+    return templates.TemplateResponse(
+        request, "sboms.html", {"sboms": sboms, "banner": banner, "active_nav": "/sboms"}
+    )
 
 
 @protected.get("/sboms/{sbom_id}", response_class=HTMLResponse)
@@ -510,13 +519,84 @@ def sbom_detail_page(
         raise HTTPException(status_code=404, detail=f"No sbom with id {sbom_id}")
 
     sbom = {**row, "age_human": _humanize_age(_age_seconds(row["generated_at"]))}
-    return templates.TemplateResponse(request, "sbom_detail.html", {"sbom": sbom, "banner": banner})
+    return templates.TemplateResponse(
+        request, "sbom_detail.html", {"sbom": sbom, "banner": banner, "active_nav": "/sboms"}
+    )
 
 
 app.include_router(protected)
 
 
-# --- HOME-233: Google OAuth entry points -------------------------------------
+# --- the login page ----------------------------------------------------------
+#
+# Registered on `app`, not `protected` — a login page you must already be
+# logged in to reach is not a login page. In basic mode this is what
+# kabom.auth redirects an unauthenticated browser to; API clients skip it
+# entirely and send `Authorization: Basic` instead.
+
+
+def _safe_next(raw: str | None) -> str:
+    """Where to send someone after a successful login.
+
+    Only a path on this site is ever accepted. Anything absolute,
+    scheme-relative (`//evil.example`) or otherwise not starting with a
+    single `/` falls back to the search page — a login form that will
+    redirect anywhere it is told is an open redirect, and this one takes
+    that target straight from the query string.
+    """
+    if not raw or not raw.startswith("/") or raw.startswith("//"):
+        return "/"
+    return raw
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str | None = None) -> HTMLResponse:
+    """The sign-in form. In google mode there is nothing to type, so this
+    just points at the OAuth flow instead of showing a password field."""
+    mode = auth.load_auth_mode()
+    if mode == "google":
+        return RedirectResponse(url="/auth/login", status_code=303)
+    return templates.TemplateResponse(
+        request, "login.html", {"next": _safe_next(next), "error": None}
+    )
+
+
+@app.post("/login", response_class=HTMLResponse)
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    """Check the submitted credentials and, if they are right, start a
+    session. A wrong password re-renders the form with one deliberately
+    vague message — which of the two was wrong is not the visitor's
+    business."""
+    if auth.load_auth_mode() != "basic":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    target = _safe_next(next)
+    if not auth.check_basic_credentials(username, password):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"next": target, "error": "Incorrect username or password."},
+            status_code=401,
+        )
+
+    request.session["user"] = username
+    return RedirectResponse(url=target, status_code=303)
+
+
+@app.post("/logout")
+def logout_submit(request: Request) -> RedirectResponse:
+    """POST, not GET: a link a browser can prefetch should not be able to
+    sign someone out."""
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
+
+
+# --- Google OAuth entry points -----------------------------------------------
 #
 # These three routes are the only ones that must stay reachable without
 # already being authenticated — that is the entire point of a login flow —

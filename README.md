@@ -100,8 +100,20 @@ and JS-blocked degradation, on desktop and mobile viewports. Runs in CI too.
 | `KABOM_DB_PATH` | SQLite file. Defaults to `/data/kabom.sqlite3` in the image. |
 | `KABOM_REFRESH_MINUTES` | Background re-ingest interval. Default 60. |
 | `KABOM_AUTH` | `basic` or `google`. Required — there is no unauthenticated mode. |
+| `KABOM_SESSION_SECRET` | Signs the login session cookie. Required in both modes; the app refuses to start without it rather than generating one, since a generated secret logs everyone out on every restart. |
 | `KABOM_BASIC_USER` `KABOM_BASIC_PASSWORD_HASH` | Basic mode. A bcrypt hash, never a plaintext password. |
-| `KABOM_GOOGLE_CLIENT_ID` `KABOM_GOOGLE_CLIENT_SECRET` `KABOM_ALLOWED_EMAILS` `KABOM_SESSION_SECRET` | Google mode. `ALLOWED_EMAILS` is an explicit allow-list, never a domain match. The app refuses to start without a session secret rather than generating one. |
+| `KABOM_GOOGLE_CLIENT_ID` `KABOM_GOOGLE_CLIENT_SECRET` `KABOM_ALLOWED_EMAILS` | Google mode. `ALLOWED_EMAILS` is an explicit allow-list, never a domain match. |
+| `KABOM_INSECURE_COOKIES` | Set to `1` to drop the `Secure` flag on the session cookie. **Local http development only** — without it a browser will not send the cookie back over plain HTTP and login silently loops. |
+
+### Signing in
+
+A browser gets a real login page at `/login` — never the native basic-auth
+popup, because KaBOM does not send a `WWW-Authenticate` challenge. Signing in
+sets a signed session cookie; `Sign out` clears it.
+
+API clients skip all of that and send `Authorization: Basic` on every
+request, which is what `curl -u user:pass https://kabom.example.com/api/status`
+already does. `/healthz` is the only route that needs nothing at all.
 
 ## API
 

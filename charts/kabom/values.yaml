@@ -66,9 +66,11 @@ env:
 # Name of an EXISTING Kubernetes Secret, holding whichever of these keys the
 # chosen authMode needs:
 #   KABOM_S3_ACCESS_KEY, KABOM_S3_SECRET_KEY        (always)
+#   KABOM_SESSION_SECRET                            (always — both modes
+#                                                    sign a login session)
 #   KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH     (authMode: basic)
-#   KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET,
-#   KABOM_SESSION_SECRET                            (authMode: google)
+#   KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET
+#                                                   (authMode: google)
 # This chart only references it by name (envFrom.secretRef) — it never
 # creates, reads, or templates the Secret's contents, so whatever you use to
 # manage secrets (SOPS, Sealed Secrets, an external operator) keeps owning

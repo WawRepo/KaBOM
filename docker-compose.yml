@@ -75,6 +75,13 @@ services:
       KABOM_BASIC_USER: kabom-dev
       # bcrypt hash of "kabom-dev-only-not-a-real-password"
       KABOM_BASIC_PASSWORD_HASH: "$$2b$$12$$F7iaI9BH/eqVXaJv/4qBVeomI9m5qZL4F6ESGwxOIOEMxygWObFM."
+      # Signs the login session cookie. Fixed and fake, like everything else
+      # in this file — a real deployment gets one from its secret store.
+      KABOM_SESSION_SECRET: kabom-dev-only-not-a-real-session-secret
+      # Lets the session cookie travel over plain http://localhost. Dev only:
+      # without it the cookie is marked Secure, the browser refuses to send it
+      # back, and logging in here would bounce straight to the login page.
+      KABOM_INSECURE_COOKIES: "1"
 
 volumes:
   minio-data:

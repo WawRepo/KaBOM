@@ -1,28 +1,52 @@
 {% extends "base.html" %}
 {% block title %}KaBOM — Inventory{% endblock %}
 {% block content %}
-  <h1 class="mb-4 text-xl font-semibold">Inventory</h1>
-  <p class="mb-4 text-sm text-slate-500">
-    Sorted oldest first — whatever is stuck is at the top, not buried
-    alphabetically.
-  </p>
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold tracking-tight">Inventory</h1>
+    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+      Sorted oldest first — whatever is stuck sits at the top, not buried
+      alphabetically.
+    </p>
+  </div>
 
   {% if sboms %}
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="sbom-list">
       {% for s in sboms %}
         <a
           href="/sboms/{{ s.id }}"
-          class="block rounded-lg border border-slate-200 p-4 hover:shadow-md
-                 dark:border-slate-700"
+          class="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
         >
-          <div class="font-medium">{{ s.subject or "(unknown subject)" }}</div>
-          <div class="text-xs uppercase text-slate-500">{{ s.kind }}</div>
-          <div class="mt-2 text-sm">{{ s.component_count }} components</div>
-          <div class="text-sm text-slate-500">{{ s.age_human }} old</div>
+          <div class="flex items-start justify-between gap-3">
+            <span class="min-w-0 truncate font-semibold group-hover:underline">
+              {{ s.subject or "(unknown subject)" }}
+            </span>
+            <span class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              {{ s.kind }}
+            </span>
+          </div>
+
+          <div class="mt-4 flex items-baseline gap-1.5">
+            <span class="text-2xl font-bold tabular-nums">{{ s.component_count }}</span>
+            <span class="text-sm text-slate-500 dark:text-slate-400">
+              package{{ "" if s.component_count == 1 else "s" }}
+            </span>
+          </div>
+
+          <div class="mt-3 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <svg aria-hidden="true" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-11.25a.75.75 0 0 0-1.5 0v3.5c0 .199.079.39.22.53l2 2a.75.75 0 1 0 1.06-1.06l-1.78-1.78V6.75Z" clip-rule="evenodd" />
+            </svg>
+            {{ s.age_human }} old
+          </div>
         </a>
       {% endfor %}
     </div>
   {% else %}
-    <p class="text-slate-500">No SBOMs ingested yet.</p>
+    <div class="rounded-2xl border border-dashed border-slate-300 px-6 py-12 text-center dark:border-slate-700">
+      <p class="font-medium">No SBOMs ingested yet.</p>
+      <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Check that the bucket is reachable and has CycloneDX files in it.
+      </p>
+    </div>
   {% endif %}
 {% endblock %}

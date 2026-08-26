@@ -70,7 +70,8 @@ overall_status=0
 # "mixed" is docker-compose.yml's own default and exercises the most: all
 # three screens, keyboard search, the JS-blocked degradation, the RED banner
 # (from a real failed sample), and the red result border.
-run_scenario mixed tests/screens.spec.ts tests/freshness-banner.spec.ts tests/js-blocked.spec.ts \
+run_scenario mixed tests/login.spec.ts tests/screens.spec.ts tests/freshness-banner.spec.ts \
+  tests/js-blocked.spec.ts \
   || overall_status=$?
 
 # "fresh" and "amber" only need to prove the other two banner colours —

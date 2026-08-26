@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { login } from "../helpers";
 
 // HOME-232's acceptance criterion: "renders correctly with the network's
 // JavaScript blocked for HTMX — degrade to a plain form submit rather than a
@@ -9,6 +10,10 @@ import { test, expect } from "@playwright/test";
 // and kabom/templates/index.html's <form> is a plain method="get" form.
 
 test.describe("degradation when the htmx script is blocked", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
   test.beforeEach(async ({ page }) => {
     await page.route("**/static/js/htmx.min.js", (route) => route.abort());
   });
