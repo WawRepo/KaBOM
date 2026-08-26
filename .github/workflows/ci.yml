@@ -40,3 +40,17 @@ jobs:
 
       - name: Build image
         run: docker build -t kabom:ci .
+
+  e2e:
+    # Playwright, driving a real browser against the docker-compose stack
+    # (see docker-compose.yml, tests/e2e/, and the README's "End-to-end
+    # tests" section). ubuntu-latest ships Docker + Compose v2 and Node
+    # already, so this needs no extra setup beyond the OS browser deps.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Playwright suite against docker compose
+        env:
+          PLAYWRIGHT_INSTALL_DEPS: "1"
+        run: ./tests/e2e/run-e2e.sh

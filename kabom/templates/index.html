@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}KaBOM — Search{% endblock %}
+{% block content %}
+  <h1 class="sr-only">Search SBOMs</h1>
+
+  <!--
+    Progressive enhancement, not a JS-only widget:
+
+    - No JavaScript / htmx blocked: this is a plain <form method="get">. The
+      browser submits it (Enter, or the visible Search button) as a normal
+      GET to "/?q=...", the server renders this exact page with results
+      filled in, full page load. Nothing here depends on JS to function.
+    - htmx present: hx-trigger fires the same GET on every keystroke
+      (debounced 300ms), hx-select carves the #search-results div back out
+      of the full-page response, and hx-swap="outerHTML" drops it in place
+      of the old one — so the exact same server route serves both cases,
+      there is no separate JSON-for-the-UI endpoint to keep in sync.
+  -->
+  <form
+    method="get"
+    action="/"
+    hx-get="/"
+    hx-trigger="keyup changed delay:300ms from:#q, search from:#q"
+    hx-select="#search-results"
+    hx-target="#search-results"
+    hx-swap="outerHTML"
+    class="flex gap-2"
+  >
+    <label for="q" class="sr-only">Search for a package name</label>
+    <input
+      type="search"
+      id="q"
+      name="q"
+      value="{{ q or '' }}"
+      autofocus
+      autocomplete="off"
+      placeholder="Search for a package name…"
+      class="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-lg
+             text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none
+             dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+    />
+    <button
+      type="submit"
+      class="shrink-0 rounded-lg bg-slate-800 px-4 py-3 text-white hover:bg-slate-700
+             dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-300"
+    >
+      Search
+    </button>
+  </form>
+
+  {% include "_search_results.html" %}
+{% endblock %}
