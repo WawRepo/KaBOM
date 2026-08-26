@@ -16,13 +16,18 @@ docker compose up --build
 # http://localhost:8090 — login: kabom-dev / kabom-dev-only-not-a-real-password
 ```
 
-Brings up KaBOM against a local MinIO seeded from `tests/samples/`. No real
-credentials, never touches the production bucket. `docker compose down -v`
-tears it down.
+Brings up KaBOM against a local MinIO seeded from `dev-sboms/` — real `syft`
+output for three Alpine images that share `libssl3`, `musl` and `busybox` at
+different versions, so searching one package actually shows the thing KaBOM
+is for. No real credentials, never touches the production bucket.
+`docker compose down -v` tears it down.
 
-The default seed is deliberately **red** — one good sample, one corrupted, so
-the banner reads "1 of 2 read" out of the box. `KABOM_SEED_SCENARIO=fresh` or
-`=amber` gives the other two colours.
+Every `*.json` in `dev-sboms/` gets uploaded, so dropping your own Syft output
+in there is enough to browse it — see [`dev-sboms/README.md`](dev-sboms/README.md).
+
+The default seed is deliberately **red**: one file in the mix is corrupted, so
+the banner reports the failed read out of the box instead of hiding it.
+`KABOM_SEED_SCENARIO=fresh` or `=amber` gives the other two colours.
 
 ## The freshness banner
 

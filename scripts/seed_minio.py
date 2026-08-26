@@ -5,26 +5,33 @@ CycloneDX files.
 This is dev/test tooling only — see docker-compose.yml's `seed` service. It
 runs against the compose-local MinIO container, never the real storage-host MinIO,
 and it is never copied into the production image (the Dockerfile only ever
-COPYs the `kabom` package; this script and tests/samples/ are bind-mounted
-into the `seed` container by docker-compose instead).
+COPYs the `kabom` package; this script, dev-sboms/ and tests/samples/ are
+bind-mounted into the `seed` container by docker-compose instead).
 
 Reuses the app's own boto3 dependency and the same image built from the
 production Dockerfile, rather than pulling in a second `mc`/`jq`-based
 image — see CLAUDE.md: "every script in the homelab is Python."
 
-KABOM_SEED_SCENARIO picks what gets uploaded (default "mixed"):
+Everything in dev-sboms/ is uploaded, so dropping your own real Syft output
+in there is all it takes to browse it locally — no code change needed.
 
-  mixed  (default) - the two committed sample files exactly as they are: one
-                      good, one corrupted. This is deliberately the default
-                      so a plain `docker compose up` demonstrates KaBOM's
-                      real failure-reporting behaviour out of the box (a RED
-                      banner, "1 of 2 read") instead of hiding it behind a
-                      flag nobody would think to pass.
-  fresh  - only the good sample, timestamp untouched -> a GREEN banner.
-  amber  - only the good sample, timestamp rewritten to 3 days ago -> AMBER.
+KABOM_SEED_SCENARIO picks the freshness the banner ends up showing
+(default "mixed"):
 
-Used by the Playwright suite (tests/e2e/) to exercise all three freshness-
-banner colours — see the README for how the suite cycles through scenarios.
+  mixed  (default) - every dev-sboms/ file, plus the deliberately corrupted
+                     fixture from tests/samples/. One file that cannot be
+                     parsed forces a RED banner regardless of age, so a
+                     plain `docker compose up` demonstrates KaBOM's real
+                     failure-reporting out of the box instead of hiding it
+                     behind a flag nobody would think to pass.
+  fresh  - every dev-sboms/ file, timestamps rewritten to now -> GREEN.
+  amber  - every dev-sboms/ file, timestamps rewritten to 3 days ago -> AMBER.
+
+`fresh` and `amber` rewrite timestamps rather than trusting what Syft wrote,
+because these files are committed: their real generation dates recede into
+the past, and a fixture that silently drifts from GREEN to RED over a few
+months would break the Playwright suite (tests/e2e/) long after the commit
+that "caused" it.
 """
 
 from __future__ import annotations
@@ -38,32 +45,63 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-_SAMPLES_DIR = Path(__file__).resolve().parent.parent / "tests" / "samples"
-_GOOD_SAMPLE = _SAMPLES_DIR / "syft-alpine-3.19.cdx.json"
-_CORRUPTED_SAMPLE = _SAMPLES_DIR / "syft-alpine-3.19.corrupted.cdx.json"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DEV_SBOMS_DIR = _REPO_ROOT / "dev-sboms"
+
+# The one file deliberately kept in tests/samples/ rather than dev-sboms/: it
+# is a pytest fixture first (tests/test_ingest.py, tests/test_db.py) and only
+# incidentally useful here, and dev-sboms/ is documented as "drop a real SBOM
+# in and it shows up" — a broken file sitting in there invites confusion.
+_CORRUPTED_SAMPLE = _REPO_ROOT / "tests" / "samples" / "syft-alpine-3.19.corrupted.cdx.json"
 
 
-def _good_bytes(timestamp: datetime | None) -> bytes:
-    """The good sample's bytes, optionally with metadata.timestamp rewritten
-    so a scenario can control the sbom's age without a second fixture."""
-    doc = json.loads(_GOOD_SAMPLE.read_text())
-    if timestamp is not None:
-        doc["metadata"]["timestamp"] = timestamp.isoformat()
+def _dev_sbom_files() -> list[Path]:
+    files = sorted(_DEV_SBOMS_DIR.glob("*.json"))
+    if not files:
+        raise SystemExit(f"No *.json files found in {_DEV_SBOMS_DIR} — nothing to seed.")
+    return files
+
+
+def _key_for(path: Path) -> str:
+    """S3 key for one local file.
+
+    The leading path segment is what kabom.db.infer_kind reads to decide
+    whether an SBOM describes a container image or a host, so everything in
+    dev-sboms/ lands under `images/` — these are all `syft <image>` output.
+    """
+    return f"images/{path.name}"
+
+
+def _body(path: Path, timestamp: datetime | None) -> bytes:
+    """One file's bytes, optionally with metadata.timestamp rewritten so a
+    scenario can control the sbom's age without a second set of fixtures."""
+    raw = path.read_bytes()
+    if timestamp is None:
+        return raw
+    doc = json.loads(raw)
+    doc.setdefault("metadata", {})["timestamp"] = timestamp.isoformat()
     return json.dumps(doc).encode("utf-8")
 
 
 def _objects_for_scenario(scenario: str) -> list[tuple[str, bytes]]:
     if scenario == "fresh":
-        return [("hosts/alpine-good.cdx.json", _good_bytes(None))]
-    if scenario == "amber":
-        amber_timestamp = datetime.now(UTC) - timedelta(days=3)
-        return [("hosts/alpine-good.cdx.json", _good_bytes(amber_timestamp))]
+        stamp = datetime.now(UTC)
+    elif scenario == "amber":
+        stamp = datetime.now(UTC) - timedelta(days=3)
+    elif scenario == "mixed":
+        stamp = datetime.now(UTC)
+    else:
+        raise ValueError(f"Unknown KABOM_SEED_SCENARIO: {scenario!r}")
+
+    objects = [(_key_for(path), _body(path, stamp)) for path in _dev_sbom_files()]
+
     if scenario == "mixed":
-        return [
-            ("hosts/alpine-good.cdx.json", _GOOD_SAMPLE.read_bytes()),
-            ("hosts/alpine-corrupted.cdx.json", _CORRUPTED_SAMPLE.read_bytes()),
-        ]
-    raise ValueError(f"Unknown KABOM_SEED_SCENARIO: {scenario!r}")
+        # Appended last so the good files above are unambiguously fresh: the
+        # banner goes RED here because one file failed to parse, not because
+        # the data is old. Keeps the Playwright assertion meaningful.
+        objects.append((f"images/{_CORRUPTED_SAMPLE.name}", _CORRUPTED_SAMPLE.read_bytes()))
+
+    return objects
 
 
 def _wait_for_minio(client, attempts: int = 30, delay_seconds: float = 1.0) -> None:

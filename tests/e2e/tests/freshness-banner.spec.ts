@@ -24,13 +24,23 @@ test.describe(`freshness banner — scenario "${scenario}"`, () => {
       await expect(banner).toContainText("Updated");
       await expect(banner).not.toContainText("STALE");
     } else {
-      // "mixed": one good sample + one corrupted sample -> a failed read,
-      // which forces RED regardless of age (see kabom/main.py's
+      // "mixed": every dev-sboms/ file plus one corrupted fixture -> a failed
+      // read, which forces RED regardless of age (see kabom/main.py's
       // _freshness_banner).
       await expect(banner).toHaveAttribute("data-level", "red");
       await expect(banner).toContainText("STALE");
-      await expect(banner).toContainText("1 of 2 read");
       await expect(banner).toContainText("These answers may be wrong. Check the SBOM job.");
+
+      // Assert the shape — "N of M read" with N < M — rather than exact
+      // counts: dev-sboms/ is documented as a drop-your-own-SBOM-in folder,
+      // so hardcoding a total here would break the suite for anyone who
+      // does exactly that. What must hold is that a file failed to parse
+      // and the banner says so.
+      const headline = await banner.textContent();
+      const counts = headline?.match(/(\d+) of (\d+) read/);
+      expect(counts).not.toBeNull();
+      const [read, seen] = [Number(counts![1]), Number(counts![2])];
+      expect(seen).toBeGreaterThan(read);
     }
   });
 

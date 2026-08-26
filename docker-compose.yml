@@ -5,11 +5,11 @@
 # without ever touching the real storage-host MinIO.
 #
 # Usage:
-#   docker compose up --build            # seeds one good + one corrupted
-#                                         # sample -> a RED banner, "1 of 2
-#                                         # read" (see scripts/seed_minio.py's
-#                                         # docstring for why that is the
-#                                         # deliberate default)
+#   docker compose up --build            # every dev-sboms/ file plus one
+#                                         # deliberately corrupted fixture ->
+#                                         # a RED banner (see
+#                                         # scripts/seed_minio.py's docstring
+#                                         # for why that is the default)
 #   KABOM_SEED_SCENARIO=fresh docker compose up --build   # a GREEN banner
 #   KABOM_SEED_SCENARIO=amber docker compose up --build   # an AMBER banner
 #
@@ -39,6 +39,9 @@ services:
     volumes:
       - ./scripts/seed_minio.py:/app/scripts/seed_minio.py:ro
       - ./tests/samples:/app/tests/samples:ro
+      # Every *.json in here is uploaded. Drop your own Syft output in and it
+      # shows up on the next `docker compose up` — no code change needed.
+      - ./dev-sboms:/app/dev-sboms:ro
     environment:
       KABOM_S3_ENDPOINT: http://minio:9000
       KABOM_S3_BUCKET: kabom-sboms

@@ -1,8 +1,10 @@
 import { test, expect } from "@playwright/test";
 
 // Runs against whichever seed scenario docker-compose currently has up (see
-// run-e2e.sh) — these assertions hold regardless of scenario: there is
-// always exactly one successfully-parsed sample sbom ("alpine").
+// run-e2e.sh). These assertions hold regardless of scenario, and regardless
+// of anything extra dropped into dev-sboms/: every scenario seeds the three
+// committed Alpine-based images, all of which contain `alpine-baselayout`
+// and exactly one package named `zlib`.
 
 test.describe("the three screens", () => {
   test("/ — search box is focused on load and works with the keyboard alone", async ({
@@ -27,19 +29,19 @@ test.describe("the three screens", () => {
     await page.goto("/sboms");
 
     await expect(page.getByTestId("sbom-list")).toBeVisible();
-    await expect(page.getByRole("link", { name: /alpine/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /nginx/i })).toBeVisible();
   });
 
   test("/sboms/{id} — the contents screen lists real components", async ({ page }) => {
     await page.goto("/sboms");
-    await page.getByRole("link", { name: /alpine/i }).click();
+    await page.getByRole("link", { name: /nginx/i }).click();
 
     await expect(page.getByTestId("component-table")).toBeVisible();
     await expect(page.getByText("alpine-baselayout", { exact: true })).toBeVisible();
 
     // The client-side filter narrows the visible rows without a page
-    // reload. "zlib" matches exactly one package in the sample SBOM (unlike
-    // "baselayout", which also matches "alpine-baselayout-data").
+    // reload. "zlib" matches exactly one package in each committed image
+    // (unlike "baselayout", which also matches "alpine-baselayout-data").
     await page.locator("#component-filter").fill("zlib");
     await expect(page.getByText("zlib", { exact: true })).toBeVisible();
     await expect(page.locator("tbody tr:visible")).toHaveCount(1);
