@@ -11,7 +11,7 @@ jobs:
     # fleet and does not need to be.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -36,7 +36,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image
         run: docker build -t kabom:ci .
@@ -48,7 +48,7 @@ jobs:
     # already, so this needs no extra setup beyond the OS browser deps.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run Playwright suite against docker compose
         env:
@@ -62,7 +62,7 @@ jobs:
     # job via a helm_release, not this repo's CI.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v4
