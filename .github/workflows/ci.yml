@@ -43,6 +43,8 @@ jobs:
     # Kaniko builds for whatever architecture it runs on and cannot
     # cross-build, so this is an arm64 image built natively on the cluster.
     runs-on: arc-k8s-kabom
+    permissions:
+      contents: read
     container:
       # The -debug tag is the one with a shell, which the Actions runner
       # needs to execute `run:` steps at all.
@@ -53,8 +55,13 @@ jobs:
       # from the git context below instead, which needs no checkout step.
       - name: Build image (no push)
         env:
-          # Kaniko reads this to clone a private repo.
-          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This repo is private, so the git context needs credentials.
+          # NOT GIT_TOKEN: kaniko maps that to the *username* with an empty
+          # password, which GitHub rejects ("authentication required").
+          # GitHub's documented form is the literal username
+          # "x-access-token" with the token as the password.
+          GIT_USERNAME: x-access-token
+          GIT_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           /kaniko/executor \
             --context "git://github.com/${{ github.repository }}.git#${{ github.ref }}" \

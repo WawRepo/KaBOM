@@ -67,7 +67,12 @@ jobs:
 
       - name: Build and push to GHCR
         env:
-          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # See ci.yml: kaniko maps GIT_TOKEN to the username with an empty
+          # password, which GitHub rejects. x-access-token + token is the
+          # form that works for a private repo.
+          GIT_USERNAME: x-access-token
+          GIT_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           set -eu
@@ -77,7 +82,7 @@ jobs:
           # Kaniko reads registry credentials from a docker config file
           # rather than a `docker login`, there being no daemon to log in to.
           mkdir -p /kaniko/.docker
-          auth=$(printf '%s:%s' "${{ github.actor }}" "$GIT_TOKEN" | base64 | tr -d '\n')
+          auth=$(printf '%s:%s' "${{ github.actor }}" "$GHCR_TOKEN" | base64 | tr -d '\n')
           printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" "$auth" > /kaniko/.docker/config.json
 
           /kaniko/executor \
