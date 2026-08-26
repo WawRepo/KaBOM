@@ -1,11 +1,32 @@
-<img src="kabom/static/img/logo-wordmark.jpeg" alt="KaBOM" width="260" />
+<img src="kabom/static/img/banner.jpeg" alt="KaBOM" />
 
 *Your SBOMs, without the enterprise.*
 
 Reads CycloneDX SBOMs out of MinIO and lets one person search them:
-**"do we have this package, and where?"** Built for a homelab with 27 SBOM
-files, not a company with thousands. It never scans anything — Grype does that
-elsewhere, KaBOM only reads what that job wrote.
+**"do we have this package, and where?"** Built for a homelab with a few dozen
+SBOM files, not a company with thousands. It never scans anything — Grype does
+that elsewhere, KaBOM only reads what that job wrote.
+
+## Why
+
+A homelab is never homogeneous. Packages arrive by half a dozen different
+routes: `apt` on one host, a distro image on another, a pile of container
+images pulled from as many registries, plus whatever a language package
+manager dragged in underneath.
+
+When a CVE lands, the only question that matters is **"am I running that, and
+where?"** — and answering it means checking each host and each image
+separately, by hand, in a different way each time.
+
+Scanners like Syft and Grype already solve the hard half: they produce an SBOM
+per host and per image, and they flag the vulnerable ones. What is missing at
+this size is somewhere to *put* the results that you can actually query
+across. The full-size answer to that is OWASP Dependency-Track, which is
+excellent and wants 8 GB of RAM, four cores and its own Postgres — more than
+the whole fleet it would be watching.
+
+KaBOM is the small version: point it at the bucket the nightly scan already
+writes to, and search every host and image at once.
 
 ## Quick start
 
@@ -124,11 +145,15 @@ helm install kabom charts/kabom \
 
 Deployment, Service, Ingress, PVC. One replica, `ClusterIP`, no autoscaling —
 KaBOM has exactly one deployment, forever. The chart **does not create the
-Secret**; it references an existing one by name, so the SOPS flow in
-`infra-repo` is unchanged.
+Secret**; it references an existing one by name, so whatever you already use
+to manage secrets (SOPS, Sealed Secrets, an external operator) keeps owning
+them.
 
-`persistence.storageClass` must stay `local-path`, never `smb-storage` — SMB has
-no POSIX locking and SQLite corrupts on it.
+**Give `persistence.storageClass` a volume with real POSIX locking** — node
+local storage is the obvious choice. SQLite corrupts on SMB/CIFS, which rules
+out most NAS-backed classes. That pins the pod to one node; with a single
+replica and a rebuildable database that is a fair trade, since the source of
+truth is the bucket and a full re-ingest takes seconds.
 
 `helm lint charts/kabom` and `helm template kabom charts/kabom` validate the
 chart without a cluster. Both run in CI.
