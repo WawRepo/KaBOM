@@ -119,16 +119,16 @@ To try Google sign-in against the local stack:
 
 ```bash
 cp docker-compose.override.yml.example docker-compose.override.yml
-cp .env.example .env        # then fill in the client ID and secret
+# fill in the client ID and secret, then:
 docker compose up --build
 ```
 
-Compose merges the override and reads `.env` on its own. Add
+Compose merges `docker-compose.override.yml` on its own — no flags. Add
 `http://localhost:8090/auth/callback` to the client's authorized redirect
-URIs — Google special-cases localhost, so plain HTTP is fine there. Both
-files are gitignored: `.env` holds a real secret, and committing the
-override would flip everyone's `docker compose up` to Google mode and break
-the Playwright suite, which drives the basic-auth form.
+URIs; Google special-cases localhost, so plain HTTP is fine there. The
+override is gitignored: it holds a real secret, and committing it would
+flip everyone's `docker compose up` to Google mode and break the Playwright
+suite, which drives the basic-auth form. Delete it to go back.
 
 ## API
 

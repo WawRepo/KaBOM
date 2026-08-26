@@ -2,15 +2,14 @@
 # instead of the built-in basic-auth login form.
 #
 #   cp docker-compose.override.yml.example docker-compose.override.yml
-#   cp .env.example .env          # then fill in the real values
+#   # fill in the two values below, then:
 #   docker compose up --build
 #
 # Compose merges `docker-compose.override.yml` on top of docker-compose.yml
-# automatically, and reads `.env` for the ${...} substitutions below — no
-# extra flags. Both files are gitignored: this one because committing it
-# would flip `docker compose up` to Google mode for everyone (and break the
-# Playwright suite, which drives the basic-auth form), and .env because it
-# holds a real client secret.
+# automatically — no flags, no -f. The real file is gitignored: it holds a
+# client secret, and committing it would flip everyone's `docker compose up`
+# to Google mode, which would also break the Playwright suite (that drives
+# the basic-auth login form).
 #
 # In the Google Cloud console, under Clients -> your Web application client,
 # add this to "Authorized redirect URIs" alongside your production one:
@@ -25,9 +24,9 @@ services:
   kabom:
     environment:
       KABOM_AUTH: google
-      KABOM_GOOGLE_CLIENT_ID: ${KABOM_GOOGLE_CLIENT_ID}
-      KABOM_GOOGLE_CLIENT_SECRET: ${KABOM_GOOGLE_CLIENT_SECRET}
+      KABOM_GOOGLE_CLIENT_ID: 000000000000-xxxxxxxx.apps.googleusercontent.com
+      KABOM_GOOGLE_CLIENT_SECRET: replace-me
       # Comma-separated, exact addresses. Never a domain match, never "any
       # Google account" — an OAuth app that accepts everyone looks
       # identical to a working one.
-      KABOM_ALLOWED_EMAILS: ${KABOM_ALLOWED_EMAILS}
+      KABOM_ALLOWED_EMAILS: you@gmail.com
