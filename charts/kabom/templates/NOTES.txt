@@ -12,6 +12,8 @@ env.authMode = "{{ .Values.env.authMode }}"):
   KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH            (authMode: basic)
 {{- else }}
   KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET     (authMode: google)
+  KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH            (optional — adds a
+    Basic service account for scripts that cannot do an OAuth flow)
 {{- end }}
 
 This chart does not create that Secret. Whatever you already use to manage

@@ -378,6 +378,56 @@ def _google_env(monkeypatch, tmp_path, *, session_secret=FAKE_SESSION_SECRET):
         monkeypatch.setenv("KABOM_SESSION_SECRET", session_secret)
 
 
+# --- google mode: the Basic service account for machines ---------------------
+
+
+def test_google_mode_accepts_basic_credentials_as_a_service_account(
+    monkeypatch, tmp_path, fresh_main
+):
+    """Cron jobs and monitoring cannot complete an OAuth flow. With the
+    basic-auth variables set, google mode still lets them call the API."""
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KABOM_BASIC_USER", FAKE_USERNAME)
+    monkeypatch.setenv("KABOM_BASIC_PASSWORD_HASH", FAKE_PASSWORD_HASH)
+    main = fresh_main()
+    conn = db.get_connection(str(tmp_path / "kabom.sqlite3"))
+    db.init_db(conn)
+    main.app.dependency_overrides[main.get_db_connection] = lambda: (yield conn)
+    try:
+        client = _client(main)
+        assert client.get("/api/status", auth=(FAKE_USERNAME, FAKE_PASSWORD)).status_code == 200
+        # Wrong password is still refused.
+        assert client.get("/api/status", auth=(FAKE_USERNAME, "nope")).status_code == 401
+    finally:
+        main.app.dependency_overrides.clear()
+        conn.close()
+
+
+def test_google_mode_service_account_is_off_unless_configured(monkeypatch, tmp_path, fresh_main):
+    """Without the basic-auth variables, Basic credentials buy nothing —
+    Google remains the only way in."""
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("KABOM_BASIC_USER", raising=False)
+    monkeypatch.delenv("KABOM_BASIC_PASSWORD_HASH", raising=False)
+    client = _client(fresh_main())
+
+    assert client.get("/api/status", auth=(FAKE_USERNAME, FAKE_PASSWORD)).status_code == 401
+
+
+def test_google_mode_half_configured_service_account_is_a_clear_error(
+    monkeypatch, tmp_path, fresh_main
+):
+    """Setting only one of the pair is a typo, and would silently leave the
+    service account switched off."""
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KABOM_BASIC_USER", FAKE_USERNAME)
+    monkeypatch.delenv("KABOM_BASIC_PASSWORD_HASH", raising=False)
+    main = fresh_main()
+
+    with pytest.raises(ValueError, match="must be set together"):
+        main.auth.validate_startup_config()
+
+
 def test_google_mode_without_session_secret_refuses_to_start(monkeypatch, tmp_path, fresh_main):
     _google_env(monkeypatch, tmp_path, session_secret=None)
 

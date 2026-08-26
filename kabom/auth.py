@@ -19,6 +19,13 @@ not a placeholder — it may be the only mode this app ever runs in.
   signed cookie (Starlette's `SessionMiddleware`, backed by itsdangerous),
   which needs `KABOM_SESSION_SECRET`.
 
+  Google mode ALSO accepts `Authorization: Basic` when the basic-auth
+  variables are set, as a service account. A cron job or a monitoring
+  check inside the cluster cannot complete an interactive OAuth flow, so
+  without this google mode would lock every machine out of the API. It is
+  off unless you set those variables, and it does not weaken the
+  allow-list: that still governs every browser session.
+
 Both modes therefore need `KABOM_SESSION_SECRET`, and the app refuses to
 start without it rather than generate one: a secret minted at boot
 invalidates every session on restart, which gets "fixed" by someone
@@ -196,6 +203,29 @@ def check_basic_credentials(username: str, password: str) -> bool:
     return username_ok and password_ok
 
 
+def basic_auth_is_configured() -> bool:
+    """Whether a basic-auth identity exists to check against.
+
+    In google mode this is optional: set it and you get a service account
+    for scripts, leave it unset and Google is the only way in.
+    """
+    return bool(os.environ.get("KABOM_BASIC_USER") and os.environ.get("KABOM_BASIC_PASSWORD_HASH"))
+
+
+def _service_account_ok(credentials: HTTPBasicCredentials | None) -> bool:
+    """`Authorization: Basic` from a machine, checked against the configured
+    basic-auth identity — usable in google mode too.
+
+    Cron jobs, monitoring and anything else running inside the cluster
+    cannot complete an interactive OAuth flow, so with google mode alone
+    they would have no way to call the API at all. This is the way in for
+    them, and it is off unless the basic-auth variables are actually set.
+    """
+    if credentials is None or not basic_auth_is_configured():
+        return False
+    return check_basic_credentials(credentials.username, credentials.password)
+
+
 def _check_basic_auth(request: Request, credentials: HTTPBasicCredentials | None) -> None:
     """Authenticate a request in `basic` mode, by either route.
 
@@ -311,6 +341,18 @@ def validate_startup_config() -> None:
         load_basic_auth_config()
     else:
         load_google_auth_config()
+        # Optional in google mode — but if half of it is set, that is a
+        # typo, not a decision, and it would silently leave the service
+        # account switched off.
+        partial = bool(os.environ.get("KABOM_BASIC_USER")) != bool(
+            os.environ.get("KABOM_BASIC_PASSWORD_HASH")
+        )
+        if partial:
+            raise ValueError(
+                "KABOM_BASIC_USER and KABOM_BASIC_PASSWORD_HASH must be set together. "
+                "In google mode they are optional, and enable Authorization: Basic as a "
+                "service account for scripts; setting only one of them does nothing."
+            )
 
 
 def get_google_oauth_client() -> StarletteOAuth2App:
@@ -340,13 +382,20 @@ def get_google_oauth_client() -> StarletteOAuth2App:
     return _oauth.create_client(_GOOGLE_CLIENT_NAME)
 
 
-def _check_google_session(request: Request) -> None:
+def _check_google_session(
+    request: Request, credentials: HTTPBasicCredentials | None = None
+) -> None:
     """Check the signed session cookie against the current allow-list.
 
     Re-checked on every request, not just at login — if `KABOM_ALLOWED_EMAILS`
     is edited to drop someone, they lose access on their very next request
     rather than staying in until their cookie expires.
     """
+    # A machine sending Basic credentials is let through first, before the
+    # session is looked at: it has no session, and no way to get one.
+    if _service_account_ok(credentials):
+        return
+
     config = load_google_auth_config()
     email = request.session.get("email")
     if not email or email not in config.allowed_emails:
@@ -373,4 +422,4 @@ async def require_auth(
     if mode == "basic":
         _check_basic_auth(request, credentials)
     else:
-        _check_google_session(request)
+        _check_google_session(request, credentials)

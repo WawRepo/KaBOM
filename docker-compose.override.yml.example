@@ -30,3 +30,7 @@ services:
       # Google account" — an OAuth app that accepts everyone looks
       # identical to a working one.
       KABOM_ALLOWED_EMAILS: you@gmail.com
+      # docker-compose.yml already sets KABOM_BASIC_USER and
+      # KABOM_BASIC_PASSWORD_HASH, and google mode keeps honouring them as a
+      # service account — so `curl -u kabom-dev:...` still works against the
+      # API while the browser uses Google. Set them to "" to turn that off.

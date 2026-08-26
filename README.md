@@ -101,7 +101,7 @@ and JS-blocked degradation, on desktop and mobile viewports. Runs in CI too.
 | `KABOM_REFRESH_MINUTES` | Background re-ingest interval. Default 60. |
 | `KABOM_AUTH` | `basic` or `google`. Required — there is no unauthenticated mode. |
 | `KABOM_SESSION_SECRET` | Signs the login session cookie. Required in both modes; the app refuses to start without it rather than generating one, since a generated secret logs everyone out on every restart. |
-| `KABOM_BASIC_USER` `KABOM_BASIC_PASSWORD_HASH` | Basic mode. A bcrypt hash, never a plaintext password. |
+| `KABOM_BASIC_USER` `KABOM_BASIC_PASSWORD_HASH` | A bcrypt hash, never a plaintext password. Required in basic mode; **optional in google mode**, where it becomes a service account (see below). |
 | `KABOM_GOOGLE_CLIENT_ID` `KABOM_GOOGLE_CLIENT_SECRET` `KABOM_ALLOWED_EMAILS` | Google mode. `ALLOWED_EMAILS` is an explicit allow-list, never a domain match. |
 | `KABOM_INSECURE_COOKIES` | Set to `1` to drop the `Secure` flag on the session cookie. **Local http development only** — without it a browser will not send the cookie back over plain HTTP and login silently loops. |
 
@@ -114,6 +114,14 @@ sets a signed session cookie; `Sign out` clears it.
 API clients skip all of that and send `Authorization: Basic` on every
 request, which is what `curl -u user:pass https://kabom.example.com/api/status`
 already does. `/healthz` is the only route that needs nothing at all.
+
+**This works in google mode too.** A cron job or a monitoring check cannot
+complete an interactive OAuth flow, so google mode would otherwise lock every
+machine out of the API. Set `KABOM_BASIC_USER` and `KABOM_BASIC_PASSWORD_HASH`
+alongside the Google variables and that pair becomes a service account:
+people sign in with Google, scripts keep using `-u`. Leave them unset and
+Google is the only way in. It does not weaken the allow-list — that still
+governs every browser session.
 
 To try Google sign-in against the local stack:
 
