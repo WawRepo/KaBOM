@@ -54,3 +54,31 @@ def load_s3_config() -> S3Config:
         access_key=values["KABOM_S3_ACCESS_KEY"],
         secret_key=values["KABOM_S3_SECRET_KEY"],
     )
+
+
+# --- local app config (db path, refresh interval) --------------------------
+#
+# Unlike S3Config, these have sensible defaults and are not secrets, so they
+# do not need the "fail loudly if unset" treatment above.
+
+DEFAULT_DB_PATH = "kabom.sqlite3"
+DEFAULT_REFRESH_MINUTES = 60
+
+
+def load_db_path() -> str:
+    """Where the SQLite database file lives.
+
+    Defaults to a file in the working directory. Whatever path this points
+    to, it must be on `local-path` storage, never `nas-smb` — SMB gives no
+    POSIX locking and SQLite corrupts on it. See CLAUDE.md's traps table and
+    schema.sql's header comment.
+    """
+    return os.environ.get("KABOM_DB_PATH") or DEFAULT_DB_PATH
+
+
+def load_refresh_minutes() -> int:
+    """How often the background task re-ingests from S3, in minutes."""
+    value = os.environ.get("KABOM_REFRESH_MINUTES")
+    if not value:
+        return DEFAULT_REFRESH_MINUTES
+    return int(value)
