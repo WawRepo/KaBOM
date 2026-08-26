@@ -80,12 +80,12 @@ jobs:
     # `docker compose up` (MinIO + KaBOM) and drives a real browser at it.
     # Kaniko cannot help here — it builds images, it does not run them.
     #
-    # Left on a GitHub-hosted runner because the alternative on a
-    # kubernetes-mode ARC runner is a docker-in-docker service container,
-    # and that needs --privileged: the exact thing Kaniko was chosen to
-    # avoid. One privileged sidecar for one job may still be the right
-    # trade — see the README — but it is a deliberate decision, not a
-    # default.
+    # Stays on a GitHub-hosted runner, decided rather than defaulted. The
+    # only way to run it on the kubernetes-mode ARC runner is a
+    # docker-in-docker service container, and that needs --privileged —
+    # the exact thing Kaniko was chosen to avoid. Renting a hosted runner
+    # for one job is the cheaper trade than a privileged pod in the
+    # cluster.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
