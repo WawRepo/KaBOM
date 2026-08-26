@@ -1,0 +1,23 @@
+KaBOM is deployed. It should be reachable shortly at:
+
+  https://{{ .Values.ingress.host }}
+
+Before it can actually serve anything it needs the Kubernetes Secret named
+"{{ .Values.secretName }}" to exist in this namespace, holding (depending on
+env.authMode = "{{ .Values.env.authMode }}"):
+
+  KABOM_S3_ACCESS_KEY, KABOM_S3_SECRET_KEY               (always)
+{{- if eq .Values.env.authMode "basic" }}
+  KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH            (authMode: basic)
+{{- else }}
+  KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET,
+  KABOM_SESSION_SECRET                                   (authMode: google)
+{{- end }}
+
+This chart does not create that Secret — see infra-repo's SOPS-managed
+secret for KaBOM.
+
+Check it came up:
+
+  kubectl get pods -l app.kubernetes.io/name=kabom
+  kubectl logs deploy/kabom

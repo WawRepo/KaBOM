@@ -1,0 +1,17 @@
+apiVersion: v2
+name: kabom
+description: >-
+  KaBOM — a homelab-sized CycloneDX SBOM viewer. One chart, one release,
+  one node (see values.yaml's persistence.storageClass comment for why).
+type: application
+
+# Chart version: bump this when charts/kabom/** changes.
+version: 0.1.0
+
+# App version: informational only (shown by `helm list`); the actual image
+# tag deployed is controlled by values.image.tag, not this field.
+appVersion: "0.1.0"
+
+# Deliberately no chart repository (ChartMuseum, OCI registry, etc.) per
+# HOME-236 — one chart, one consumer (infra-repo), referenced by local path
+# or the GitHub repo directly.

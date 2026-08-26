@@ -1,0 +1,17 @@
+# ClusterIP only — the Ingress is the one and only entry point. Nothing
+# else in this cluster needs to talk to KaBOM directly, so there is no
+# `service.type` value to pick between.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kabom
+  labels:
+    app.kubernetes.io/name: kabom
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kabom
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

@@ -54,3 +54,29 @@ jobs:
         env:
           PLAYWRIGHT_INSTALL_DEPS: "1"
         run: ./tests/e2e/run-e2e.sh
+
+  helm:
+    # Renders the chart with no live cluster involved — helm lint and helm
+    # template are both purely local/offline (see HOME-236). This never
+    # installs anything anywhere; the chart's actual deploy is infra-repo's
+    # job via a helm_release, not this repo's CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: helm lint (default values)
+        run: helm lint charts/kabom
+
+      - name: helm template (default values)
+        run: helm template kabom charts/kabom
+
+      - name: helm template (google auth + TLS values, as an override sanity check)
+        run: |
+          helm template kabom charts/kabom \
+            --set env.authMode=google \
+            --set-string env.allowedEmails="a@example.com\,b@example.com" \
+            --set ingress.tls.enabled=true \
+            --set ingress.tls.secretName=kabom-tls

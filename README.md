@@ -192,18 +192,66 @@ docker run --rm \
   ingest failures are logged and recorded, never fatal (see CLAUDE.md's "must
   never show stale data as though it were current").
 
-**Actual Kubernetes deployment — Ingress, the PVC for `/data`, the Secret
-holding the basic-auth hash or Google OAuth credentials, and the Terragrunt
-unit that wires it all into the cluster — is out of scope for this repo.**
-That lives in `infra-repo`, alongside every other homelab service's deploy
-config, not here.
+## Kubernetes: the Helm chart
+
+`charts/kabom/` (HOME-236) is the packaged form of everything above —
+Deployment, Service, Ingress, and a PVC for `/data`. It **replaces the
+raw-manifest approach HOME-234 originally described**: `infra-repo`'s
+Terragrunt unit for KaBOM is a `helm_release` pointing at this chart, not a
+set of hand-written Kubernetes YAML files. That `infra-repo`-side change is
+tracked and done there, not in this repo.
+
+The chart is deliberately minimal — one replica, one namespace (whichever
+the caller installs it into), `ClusterIP` only, no autoscaling — because
+KaBOM has exactly one deployment, forever. See `charts/kabom/values.yaml`
+for the full comments on why each of those is fixed rather than a value.
+
+It **does not create the Kubernetes Secret** holding the real credentials
+(S3 keys, the basic-auth password hash, Google OAuth client secret, the
+session secret). That Secret is created by `infra-repo`'s SOPS flow, same as
+before — the chart only references it by name (`secretName`) via
+`envFrom.secretRef`, and never templates a raw secret value into the chart.
+
+```bash
+helm install kabom charts/kabom \
+  --set env.s3Endpoint=minio.storage-host.example.invalid:9000 \
+  --set env.s3Bucket=sboms \
+  --set secretName=kabom-secrets
+
+# upgrading in place, e.g. after a release bump or a values change:
+helm upgrade kabom charts/kabom \
+  --set env.s3Endpoint=minio.storage-host.example.invalid:9000 \
+  --set env.s3Bucket=sboms \
+  --set image.tag=0.3.1 \
+  --set secretName=kabom-secrets
+```
+
+Required overrides (no sane default exists): `env.s3Endpoint`,
+`env.s3Bucket`, and `secretName` (the existing Secret to read credentials
+from). Everything else in `values.yaml` — image tag, `ingress.host`
+(defaults to `kabom.example.invalid`), resource limits, `persistence.storageClass`
+— has a working default.
+
+**`persistence.storageClass` must stay `local-path`, never `smb-storage`** — see
+CLAUDE.md's traps table: SMB gives no POSIX locking and SQLite corrupts on
+it. `values.yaml` says so again right next to the field.
+
+Validate the chart without touching any cluster:
+
+```bash
+helm lint charts/kabom
+helm template kabom charts/kabom
+```
+
+Both run in CI (`.github/workflows/ci.yml`'s `helm` job) on every push.
 
 ## Status
 
-HOME-228 through HOME-234 are done: S3 ingest, SQLite storage, the search
-API, the UI, auth, and this repo's half of packaging (multi-arch image,
-non-root, read-only-root-filesystem-ready). Today the app serves (every
-route below except `/healthz` requires auth — see "Auth"):
+HOME-228 through HOME-234 and HOME-236 are done: S3 ingest, SQLite storage,
+the search API, the UI, auth, this repo's half of packaging (multi-arch
+image, non-root, read-only-root-filesystem-ready), and the Helm chart.
+Today the app serves (every route below except `/healthz` requires auth —
+see "Auth"):
 
 ```
 GET  /healthz              -> {"status": "ok"}  (no auth)
