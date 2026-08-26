@@ -19,9 +19,13 @@ uv run uvicorn kabom.main:app --reload    # dev server
 ```
 
 The dev server needs `KABOM_S3_ENDPOINT`, `KABOM_S3_BUCKET`,
-`KABOM_S3_ACCESS_KEY`, `KABOM_S3_SECRET_KEY` set to point at a MinIO — see
-"Try it locally with docker compose" below for the fastest way to get all of
-that (including sample data) with one command.
+`KABOM_S3_ACCESS_KEY`, `KABOM_S3_SECRET_KEY` set to point at a MinIO, plus
+auth (HOME-233) — either `KABOM_AUTH=basic` with `KABOM_BASIC_USER` and a
+bcrypt `KABOM_BASIC_PASSWORD_HASH` (never a plaintext password), or
+`KABOM_AUTH=google` with `KABOM_GOOGLE_CLIENT_ID`/`KABOM_GOOGLE_CLIENT_SECRET`,
+`KABOM_ALLOWED_EMAILS`, and `KABOM_SESSION_SECRET`. See "Try it locally with
+docker compose" below for the fastest way to get all of that (including
+sample data and a dev-only basic-auth login) with one command.
 
 ## The UI
 
@@ -85,7 +89,8 @@ click through without touching the real storage-host MinIO.
 
 ```bash
 docker compose up --build
-# open http://localhost:8090/
+# open http://localhost:8090/ — basic-auth login: kabom-dev /
+# kabom-dev-only-not-a-real-password (fixed, dev-only, see docker-compose.yml)
 docker compose down -v            # tear down; -v also drops the seeded data
 ```
 
@@ -138,12 +143,12 @@ suite against it, not just the Python unit tests.
 
 ## Status
 
-HOME-228 through HOME-232 are done: S3 ingest, SQLite storage, the search
-API, and this UI. Auth (HOME-233) and packaging/deploy (HOME-234) are next.
-Today the app serves:
+HOME-228 through HOME-233 are done: S3 ingest, SQLite storage, the search
+API, this UI, and auth. Packaging/deploy (HOME-234) is next. Today the app
+serves (every route below except `/healthz` requires auth — see "Auth"):
 
 ```
-GET  /healthz              -> {"status": "ok"}
+GET  /healthz              -> {"status": "ok"}  (no auth)
 POST /admin/refresh        -> trigger one ingest pass on demand
 GET  /api/search?q=...     -> [{subject, kind, name, version, purl, generated_at}]
 GET  /api/sboms            -> [{id, subject, kind, generated_at, component_count}]
@@ -152,4 +157,18 @@ GET  /api/status           -> {finished_at, sboms_seen, sboms_failed, ok, age_se
 GET  /                     -> search UI
 GET  /sboms                -> inventory UI
 GET  /sboms/{id}           -> contents UI
+GET  /auth/login           -> start Google sign-in (KABOM_AUTH=google only)
+GET  /auth/callback        -> Google OAuth callback (KABOM_AUTH=google only)
+GET  /auth/logout          -> clear the session (KABOM_AUTH=google only)
 ```
+
+## Auth
+
+`KABOM_AUTH` picks the mode — `basic` or `google` — there is no "no auth"
+mode. See `kabom/auth.py`'s module docstring for exactly what each one
+checks and why. Basic auth is meant to be finished, not a stopgap: a bcrypt
+password hash, never a plaintext password in an environment variable.
+Google mode gates access with an explicit `KABOM_ALLOWED_EMAILS` allow-list
+(never "any Google account") and needs `KABOM_SESSION_SECRET` for its
+signed session cookie — the app refuses to start without one rather than
+generate it at boot.

@@ -31,18 +31,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from authlib.integrations.starlette_client import OAuthError
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
-from kabom import db
+from kabom import auth, db
 from kabom.config import load_db_path, load_refresh_minutes, load_s3_config
 from kabom.s3_client import S3UnavailableError
 
@@ -96,6 +99,15 @@ async def _refresh_loop(minutes: int) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Validated first, before anything touches the database or S3: a
+    # misconfigured auth mode (HOME-233) must stop the app from ever serving
+    # a request, not just fail the first time someone happens to hit a
+    # protected route. For KABOM_AUTH=google this re-checks what the
+    # SessionMiddleware wiring below already validated at import time;
+    # that's cheap and keeps this one function as the single "can this app
+    # actually start" check regardless of mode.
+    auth.validate_startup_config()
+
     conn = db.get_connection(load_db_path())
     db.init_db(conn)
     conn.close()
@@ -113,6 +125,36 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="KaBOM", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="static")
+
+# --- HOME-233: auth ----------------------------------------------------------
+#
+# Session-cookie signing is only ever in play for KABOM_AUTH=google (basic
+# auth is stateless — see kabom/auth.py's module docstring). Read directly
+# from the environment here, at import time, rather than through
+# auth.load_auth_mode(): that function raises on anything but "basic" or
+# "google", and importing this module must stay safe for basic mode, google
+# mode, AND for every other test in this repo that imports kabom.main
+# without setting KABOM_AUTH at all (they never hit an auth-checking route).
+#
+# This is deliberately the "refuse to start" moment for a missing
+# KABOM_SESSION_SECRET when google mode is selected: raising here stops
+# `uvicorn kabom.main:app` (and `import kabom.main`) dead, before a single
+# request can be served — not a generated secret, not a per-request 500
+# discovered later. See CLAUDE.md's "A generated secret" trap.
+if os.environ.get("KABOM_AUTH") == "google":
+    _google_config = auth.load_google_auth_config()
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=_google_config.session_secret,
+        same_site="lax",
+        https_only=True,
+    )
+
+# Every route below except GET /healthz is registered on this router, whose
+# one dependency is the whole auth gate (kabom.auth.require_auth) — wired
+# once here rather than repeated on every handler. /healthz stays directly
+# on `app`, unauthenticated, for the Ingress health check.
+protected = APIRouter(dependencies=[Depends(auth.require_auth)])
 
 
 def get_db_connection() -> Iterator[sqlite3.Connection]:
@@ -141,7 +183,7 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/admin/refresh")
+@protected.post("/admin/refresh")
 def trigger_refresh(conn: sqlite3.Connection = Depends(get_db_connection)) -> dict:
     """Trigger one ingest pass on demand, synchronously, and report what it did."""
     db.init_db(conn)
@@ -156,7 +198,7 @@ def trigger_refresh(conn: sqlite3.Connection = Depends(get_db_connection)) -> di
     }
 
 
-@app.get("/api/search")
+@protected.get("/api/search")
 def search(
     q: str,
     version: str | None = None,
@@ -201,7 +243,7 @@ def _search_rows(conn: sqlite3.Connection, q: str, version: str | None = None) -
     ]
 
 
-@app.get("/api/sboms")
+@protected.get("/api/sboms")
 def list_sboms(conn: sqlite3.Connection = Depends(get_db_connection)) -> list[dict]:
     """Every ingested SBOM, with a component count, newest ingest first-ish
     (ordered by id — insertion order from the last ingest pass)."""
@@ -228,7 +270,7 @@ def _sboms_rows(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-@app.get("/api/sboms/{sbom_id}")
+@protected.get("/api/sboms/{sbom_id}")
 def get_sbom(sbom_id: int, conn: sqlite3.Connection = Depends(get_db_connection)) -> dict:
     """One SBOM with its full component list. 404 if the id does not exist."""
     row = _sbom_detail_row(conn, sbom_id)
@@ -264,7 +306,7 @@ def _sbom_detail_row(conn: sqlite3.Connection, sbom_id: int) -> dict | None:
     }
 
 
-@app.get("/api/status")
+@protected.get("/api/status")
 def status(conn: sqlite3.Connection = Depends(get_db_connection)) -> dict:
     """The latest ingest run, plus the age of the OLDEST sbom.
 
@@ -401,7 +443,7 @@ def _freshness_banner(status: dict) -> dict:
     return {"level": level, "headline": headline}
 
 
-@app.get("/", response_class=HTMLResponse)
+@protected.get("/", response_class=HTMLResponse)
 def index_page(
     request: Request, q: str | None = None, conn: sqlite3.Connection = Depends(get_db_connection)
 ) -> HTMLResponse:
@@ -434,7 +476,7 @@ def index_page(
     )
 
 
-@app.get("/sboms", response_class=HTMLResponse)
+@protected.get("/sboms", response_class=HTMLResponse)
 def sboms_page(
     request: Request, conn: sqlite3.Connection = Depends(get_db_connection)
 ) -> HTMLResponse:
@@ -453,7 +495,7 @@ def sboms_page(
     return templates.TemplateResponse(request, "sboms.html", {"sboms": sboms, "banner": banner})
 
 
-@app.get("/sboms/{sbom_id}", response_class=HTMLResponse)
+@protected.get("/sboms/{sbom_id}", response_class=HTMLResponse)
 def sbom_detail_page(
     sbom_id: int,
     request: Request,
@@ -470,3 +512,86 @@ def sbom_detail_page(
 
     sbom = {**row, "age_human": _humanize_age(_age_seconds(row["generated_at"]))}
     return templates.TemplateResponse(request, "sbom_detail.html", {"sbom": sbom, "banner": banner})
+
+
+app.include_router(protected)
+
+
+# --- HOME-233: Google OAuth entry points -------------------------------------
+#
+# These three routes are the only ones that must stay reachable without
+# already being authenticated — that is the entire point of a login flow —
+# so they are registered directly on `app`, not on `protected`. Each still
+# refuses to do anything unless KABOM_AUTH=google is actually the configured
+# mode, rather than assuming a client would only ever call them in that
+# mode.
+#
+# There is no live Google project wired up for this repo (no real client
+# ID/secret exists to test against), so this is authlib's standard
+# authorization-code + OpenID Connect flow, implemented against authlib's
+# documented API and exercised in tests by monkeypatching the registered
+# client's `authorize_access_token` — the same thing a real callback receives
+# back from authlib after it has already verified the ID token's signature,
+# issuer and nonce against Google's JWKS (see kabom/auth.py's
+# get_google_oauth_client) — never against a live Google endpoint.
+
+
+def _require_google_mode() -> None:
+    if auth.load_auth_mode() != "google":
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/auth/login")
+async def login(request: Request) -> RedirectResponse:
+    """Kick off the standard OAuth2 authorization-code flow. authlib stores
+    state + a nonce (since our scope includes "openid") in the session for
+    /auth/callback to check on the way back."""
+    _require_google_mode()
+    client = auth.get_google_oauth_client()
+    redirect_uri = request.url_for("auth_callback")
+    return await client.authorize_redirect(request, redirect_uri)
+
+
+@app.get("/auth/callback", name="auth_callback")
+async def auth_callback(request: Request) -> RedirectResponse:
+    """Complete the flow: exchange the code for a token, verify the ID
+    token (authlib does this internally against Google's JWKS — signature,
+    issuer, nonce, expiry), then apply the two checks that actually matter
+    here: `email_verified` must be true, and the email must be in the
+    explicit KABOM_ALLOWED_EMAILS allow-list. Anything else is a plain 403,
+    logged without the token/claims themselves."""
+    _require_google_mode()
+    client = auth.get_google_oauth_client()
+    try:
+        token = await client.authorize_access_token(request)
+    except OAuthError:
+        logger.warning("Google OAuth exchange failed")
+        raise HTTPException(status_code=401, detail="Google sign-in failed") from None
+
+    claims = token.get("userinfo")
+    if not claims:
+        logger.warning("Google OAuth token carried no verified ID token claims")
+        raise HTTPException(status_code=401, detail="Google sign-in failed")
+
+    if not claims.get("email_verified", False):
+        logger.warning("Rejected Google sign-in: email not verified")
+        raise HTTPException(status_code=403, detail="Email not verified")
+
+    email = (claims.get("email") or "").strip().lower()
+    config = auth.load_google_auth_config()
+    if not email or email not in config.allowed_emails:
+        # Deliberately no email in this log line — see the ticket's "no
+        # secret value" bar; an email address is not a secret, but there is
+        # no need to persist rejected addresses in the log either.
+        logger.warning("Rejected Google sign-in: address not in the allow-list")
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    request.session["email"] = email
+    return RedirectResponse(url="/")
+
+
+@app.get("/auth/logout")
+async def logout(request: Request) -> RedirectResponse:
+    _require_google_mode()
+    request.session.clear()
+    return RedirectResponse(url="/")
