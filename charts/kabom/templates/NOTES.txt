@@ -1,6 +1,6 @@
 KaBOM is deployed. It should be reachable shortly at:
 
-  https://{{ .Values.ingress.host }}
+  {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
 
 Before it can actually serve anything it needs the Kubernetes Secret named
 "{{ .Values.secretName }}" to exist in this namespace, holding (depending on
@@ -19,20 +19,44 @@ env.authMode = "{{ .Values.env.authMode }}"):
 This chart does not create that Secret. Whatever you already use to manage
 secrets keeps owning it.
 
+  Note: the pod reads that Secret once, at container start. Changing it
+  later does NOT restart anything and `helm upgrade` will not notice, so
+  after rotating any of those values run:
+
+    kubectl rollout restart deploy/kabom
+
   !! Upgrading from chart 0.1.x: KABOM_SESSION_SECRET is now required in
      BOTH auth modes, not just google — basic auth gained a login page and
      a signed session. Add it to the Secret before upgrading, or the pod
      will CrashLoopBackOff on startup.
-{{- if and (not .Values.ingress.tls.enabled) (not .Values.insecureCookies) }}
+{{- if not .Values.ingress.tls.enabled }}
 
-  !! ingress.tls.enabled is false and insecureCookies is false. The login
-     session cookie is marked Secure, so over plain HTTP the browser will
-     not send it back and signing in will loop on the login page with
-     nothing in the logs. Enable TLS (preferred) or set
-     insecureCookies=true.
+  !! ingress.tls.enabled is false. Two consequences, both real:
+
+     - Every API call sends `Authorization: Basic` in clear text, on every
+       request, not just at login. The bcrypt hash protects the password at
+       rest; the wire carries the password itself. Anyone who can see this
+       traffic recovers it.
+{{- if not .Values.insecureCookies }}
+     - The login session cookie is marked Secure, so over plain HTTP the
+       browser will not send it back and signing in will loop on the login
+       page with nothing in the logs.
+
+     Enable TLS. Setting insecureCookies=true "fixes" the loop by also
+     putting a replayable session cookie in clear text.
+{{- else }}
+     - insecureCookies=true, so the session cookie has no Secure flag and
+       travels in clear text too, replayable by anyone who sees it.
+
+     Both of these go away by enabling TLS.
+{{- end }}
 {{- end }}
 
 Check it came up:
 
   kubectl get pods -l app.kubernetes.io/name=kabom
   kubectl logs deploy/kabom
+
+  # If there is no container yet — a missing Secret shows up as
+  # CreateContainerConfigError, which produces no logs at all:
+  kubectl describe pod -l app.kubernetes.io/name=kabom

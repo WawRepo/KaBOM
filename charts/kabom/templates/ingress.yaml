@@ -13,7 +13,10 @@ spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    # `required`, because an empty host is not an error to Kubernetes — it
+    # installs as a CATCH-ALL rule and KaBOM starts answering for every
+    # hostname on this ingress controller, stealing other apps' traffic.
+    - host: {{ required "ingress.host must be set" .Values.ingress.host | quote }}
       http:
         paths:
           - path: /
@@ -27,5 +30,10 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.host | quote }}
-      secretName: {{ .Values.ingress.tls.secretName }}
+      # `required`, because Kubernetes accepts a TLS block with no
+      # secretName — it means "use the ingress controller's default
+      # certificate", so the install succeeds and every browser gets a
+      # name-mismatch warning on a fake self-signed cert while the operator
+      # believes TLS is working.
+      secretName: {{ required "ingress.tls.secretName is required when ingress.tls.enabled is true" .Values.ingress.tls.secretName | quote }}
   {{- end }}

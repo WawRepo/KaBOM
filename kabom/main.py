@@ -68,22 +68,29 @@ _FRESHNESS_AMBER_MAX_SECONDS = 7 * 24 * 60 * 60
 def _run_ingest_once() -> db.RunSummary | None:
     """Open a connection, run one ingest pass, close it.
 
-    Never raises: ingest failures (S3 unreachable, a bad write) are logged
-    and already recorded as a failed `run` row by db.run_ingest itself. The
-    previous sbom/component contents are left intact either way, so the app
-    keeps answering search with its last-known-good data, honestly labelled
-    by /api/status's age_seconds — never a crash, never silent staleness.
+    Never raises — and that has to include opening the database, not just
+    the ingest itself. `_refresh_loop` calls this forever; an exception
+    escaping here kills that asyncio task for the life of the process, so
+    refreshes stop permanently while /healthz stays green and nothing
+    restarts the pod. Only the age banner would ever reveal it.
+
+    Ingest failures (S3 unreachable, a bad write) are logged and already
+    recorded as a failed `run` row by db.run_ingest itself. The previous
+    sbom/component contents are left intact either way, so the app keeps
+    answering search with its last-known-good data, honestly labelled by
+    /api/status's age_seconds — never a crash, never silent staleness.
     """
-    conn = db.get_connection(load_db_path())
+    conn = None
     try:
+        conn = db.get_connection(load_db_path())
         db.init_db(conn)
-        try:
-            return db.run_ingest(conn, load_s3_config())
-        except Exception:
-            logger.exception("Ingest failed; keeping previous data")
-            return None
+        return db.run_ingest(conn, load_s3_config())
+    except Exception:
+        logger.exception("Ingest failed; keeping previous data")
+        return None
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 async def _refresh_loop(minutes: int) -> None:

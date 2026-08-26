@@ -38,6 +38,7 @@ jobs:
     # the JavaScript actions below, and the Kaniko image has none.
     runs-on: arc-k8s-kabom
     permissions:
+      # write: creates the release AND pushes the Chart.yaml stamp commit.
       contents: write
     outputs:
       tag: ${{ steps.next.outputs.tag }}
@@ -80,19 +81,44 @@ jobs:
           echo "tag=$next" >> "$GITHUB_OUTPUT"
           echo "version=${next#v}" >> "$GITHUB_OUTPUT"
 
+      # Stamped into the repo BEFORE the tag is cut, so the tag contains a
+      # chart that names the image this same release publishes. values.yaml
+      # leaves image.tag empty and the Deployment falls back to
+      # .Chart.AppVersion — a chart tagged with a version whose image was
+      # never pushed installs straight into ImagePullBackOff.
+      - name: Stamp the version into Chart.yaml and commit it
+        id: stamp
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -eu
+          sed -i -E "s/^version: .*/version: ${VERSION}/" charts/kabom/Chart.yaml
+          sed -i -E "s/^appVersion: .*/appVersion: \"${VERSION}\"/" charts/kabom/Chart.yaml
+          grep -E '^(version|appVersion):' charts/kabom/Chart.yaml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add charts/kabom/Chart.yaml
+          # [skip ci] — this commit changes only a version string that CI
+          # has already tested; re-running the whole suite on it is noise.
+          git commit -m "chore(release): chart ${VERSION} [skip ci]"
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Create the tag and the release
         uses: actions/github-script@v7
         env:
           TAG: ${{ steps.next.outputs.tag }}
+          SHA: ${{ steps.stamp.outputs.sha }}
         with:
           script: |
-            // One call creates the tag at this commit AND the release,
-            // with notes generated from the commits since the last tag.
+            // Tags the stamped commit, not the one the workflow started
+            // from, so the tag's chart and its image agree.
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: process.env.TAG,
-              target_commitish: context.sha,
+              target_commitish: process.env.SHA,
               name: process.env.TAG,
               generate_release_notes: true,
             });
@@ -147,3 +173,65 @@ jobs:
             --destination "$REGISTRY/$IMAGE_NAME:$minor" \
             --destination "$REGISTRY/$IMAGE_NAME:latest" \
             --verbosity info
+
+  chart:
+    # The chart ships with the image, at the same version, to the same
+    # registry. Helm speaks OCI natively, so GHCR needs nothing added —
+    # no ChartMuseum, no gh-pages index, no second credential.
+    needs: [tag, image]
+    runs-on: arc-k8s-kabom
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag, not main: this must package the chart the release
+          # actually points at.
+          ref: ${{ needs.tag.outputs.tag }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package and push the chart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -eu
+          # Belt and braces: the stamp step should already have done this,
+          # so a mismatch here means something went wrong upstream.
+          chart_version=$(helm show chart charts/kabom | awk '/^version:/{print $2}')
+          if [ "$chart_version" != "$VERSION" ]; then
+            echo "::error::Chart.yaml says $chart_version but the release is $VERSION"
+            exit 1
+          fi
+
+          helm package charts/kabom --destination dist
+          echo "$GHCR_TOKEN" | helm registry login "$REGISTRY" \
+            --username "${{ github.actor }}" --password-stdin
+          helm push "dist/kabom-${VERSION}.tgz" "oci://$REGISTRY/${{ github.repository_owner }}/charts"
+
+      - name: Attach the chart to the release
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: process.env.TAG,
+            });
+            const name = `kabom-${process.env.VERSION}.tgz`;
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              name,
+              data: fs.readFileSync(`dist/${name}`),
+            });
+            core.info(`Attached ${name} to ${process.env.TAG}`);

@@ -5,12 +5,18 @@ description: >-
   one node (see values.yaml's persistence.storageClass comment for why).
 type: application
 
-# Chart version: bump this when charts/kabom/** changes.
-version: 0.2.0
+# version and appVersion are deliberately kept identical, and both are set
+# by .github/workflows/release.yml — never by hand. The app and the chart
+# ship together, from one repo, to one consumer; two independent version
+# numbers would be bookkeeping with nothing to track.
+#
+# This matters more than it looks: values.yaml leaves `image.tag` empty and
+# the Deployment falls back to `.Chart.AppVersion`, so appVersion IS the
+# image tag that gets deployed. If it names a tag that was never published,
+# the install fails with ImagePullBackOff.
+version: 0.1.1
+appVersion: "0.1.1"
 
-# App version: informational only (shown by `helm list`); the actual image
-# tag deployed is controlled by values.image.tag, not this field.
-appVersion: "0.2.0"
-
-# Deliberately no chart repository (ChartMuseum, OCI registry, etc.) — one
-# chart, referenced by local path or straight from the GitHub repo.
+# No separate chart repository (ChartMuseum and friends). The chart is
+# published as an OCI artifact to the same GHCR registry that already holds
+# the image — one registry, one credential, nothing new to run.

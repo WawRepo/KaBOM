@@ -8,6 +8,10 @@
 FROM debian:bookworm-slim AS tailwind
 
 ARG TAILWIND_VERSION=v4.3.3
+# `curl -f` matters: without it a 404 or a redirect to an error page is
+# written to the output file and chmod'd executable, and the build fails
+# later with something unrelated instead of at the download.
+#
 # Set automatically by BuildKit to the target platform's arch (amd64/arm64)
 # — this is what makes the multi-arch build work without hand-picking a
 # binary.
@@ -27,7 +31,7 @@ RUN set -eux; \
         arm64) asset="tailwindcss-linux-arm64" ;; \
         *) echo "Unsupported TARGETARCH for the standalone Tailwind CLI: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    curl -sL -o /usr/local/bin/tailwindcss \
+    curl -fsSL -o /usr/local/bin/tailwindcss \
         "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/${asset}"; \
     chmod +x /usr/local/bin/tailwindcss
 

@@ -119,3 +119,29 @@ jobs:
             --set-string env.allowedEmails="a@example.com\,b@example.com" \
             --set ingress.tls.enabled=true \
             --set ingress.tls.secretName=kabom-tls
+
+      # `helm lint` passes on every one of these. Each renders a manifest
+      # that installs cleanly and is wrong — a catch-all ingress, a fake TLS
+      # certificate, a CrashLoopBackOff — so the chart turns them into
+      # template errors and this proves it still does.
+      - name: helm template rejects known-bad values
+        run: |
+          set -eu
+          fails() {
+            desc="$1"; shift
+            if helm template kabom charts/kabom "$@" >/dev/null 2>&1; then
+              echo "::error::chart accepted bad values it should reject: $desc"
+              exit 1
+            fi
+            echo "rejected as expected: $desc"
+          }
+          fails "TLS on with no secretName (would serve the ingress controller's fake cert)" \
+            --set ingress.tls.enabled=true
+          fails "empty ingress.host (would install as a catch-all rule)" \
+            --set-string ingress.host=""
+          fails "authMode with wrong case (app refuses to start)" \
+            --set env.authMode=Basic
+          fails "refreshMinutes=0 (tight re-ingest loop, not 'disabled')" \
+            --set env.refreshMinutes=0
+          fails "google mode with no allow-list (would accept any Google account)" \
+            --set env.authMode=google

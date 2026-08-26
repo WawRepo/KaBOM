@@ -2,6 +2,16 @@
 # ReadWriteOnce PVC (see pvc.yaml and values.yaml's persistence comment) —
 # a second replica could not attach the same volume, and there is exactly
 # one user to serve. Not a value: it never varies.
+{{- /*
+  Validate up front, so a typo is a template error rather than a
+  CrashLoopBackOff discovered later. `helm lint` catches neither.
+*/ -}}
+{{- if not (has .Values.env.authMode (list "basic" "google")) -}}
+  {{- fail (printf "env.authMode must be \"basic\" or \"google\", got %q. The app refuses to start on anything else, and there is no unauthenticated mode." .Values.env.authMode) -}}
+{{- end -}}
+{{- if lt (int .Values.env.refreshMinutes) 1 -}}
+  {{- fail (printf "env.refreshMinutes must be at least 1, got %v. Zero is not \"disabled\" — it becomes a tight re-ingest loop pegging a CPU core." .Values.env.refreshMinutes) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,6 +20,16 @@ metadata:
     app.kubernetes.io/name: kabom
 spec:
   replicas: 1
+  # Recreate, not the default RollingUpdate. At one replica the rolling
+  # defaults are maxSurge=1/maxUnavailable=0, so the new pod must go Ready
+  # BEFORE the old one is deleted — and both then hold `kabom-data`. On a
+  # node-local volume both mount it and two processes write one SQLite
+  # file, with the new pod's startup ingest running `DELETE FROM sbom`
+  # while the old pod is still answering searches. On a stricter RWO class
+  # the new pod just hangs on a Multi-Attach error and the upgrade never
+  # finishes. A few seconds of downtime for one user is the cheaper trade.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: kabom
@@ -18,9 +38,30 @@ spec:
       labels:
         app.kubernetes.io/name: kabom
     spec:
+      # The image is arm64-only: kaniko builds for the architecture it runs
+      # on and cannot cross-build, so there is no manifest list (see
+      # .github/workflows/release.yml). Without this the scheduler is free
+      # to place the pod on an amd64 node, where it fails with `exec format
+      # error` — and because node-local storage binds on first consumer,
+      # the PVC is now stuck on the wrong node too, so deleting the pod
+      # does not fix it. Override to {} if you ever publish a manifest list.
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      # Pod-level, and it has to be: fsGroup cannot go in the container
+      # securityContext block below. It makes the kubelet chgrp the mounted
+      # volume to gid 1000, so the non-root container can write the SQLite
+      # file. Without it this works only on provisioners that happen to
+      # create the directory world-writable; anything mounting it root:root
+      # 0755 gives `unable to open database file` on every start.
+      securityContext:
+        fsGroup: 1000
+      # KaBOM never calls the Kubernetes API, so the token is a credential
+      # sitting in the container for no reason. This removes a mount rather
+      # than adding any RBAC.
+      automountServiceAccountToken: false
       containers:
         - name: kabom
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -28,30 +69,47 @@ spec:
           # The image runs as a fixed non-root uid/gid 1000 and needs no
           # writable path except /data (see the Dockerfile) — so the root
           # filesystem can stay read-only in the cluster too.
+          #
+          # capabilities/seccompProfile are what the `restricted` Pod
+          # Security Standard additionally requires; without them the
+          # container keeps NET_RAW (raw packets, ARP spoofing on the pod
+          # network) and runs seccomp-unconfined.
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
+            # Only set when non-empty, so the Secret can supply them
+            # instead: `env` beats `envFrom`, and an always-emitted empty
+            # string would silently win over the Secret's value.
+            {{- with .Values.env.s3Endpoint }}
             - name: KABOM_S3_ENDPOINT
-              value: {{ .Values.env.s3Endpoint | quote }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.env.s3Bucket }}
             - name: KABOM_S3_BUCKET
-              value: {{ .Values.env.s3Bucket | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             - name: KABOM_DB_PATH
               value: {{ .Values.env.dbPath | quote }}
             - name: KABOM_REFRESH_MINUTES
               value: {{ .Values.env.refreshMinutes | quote }}
             - name: KABOM_AUTH
               value: {{ .Values.env.authMode | quote }}
-            {{- if .Values.insecureCookies }}
+            # Always emitted, both ways. Wrapping the "off" case in an `if`
+            # would let a stray KABOM_INSECURE_COOKIES key in the Secret
+            # turn it on with nothing visible in `kubectl describe deploy`.
             - name: KABOM_INSECURE_COOKIES
-              value: "1"
-            {{- end }}
+              value: {{ ternary "1" "0" .Values.insecureCookies | quote }}
             {{- if eq .Values.env.authMode "google" }}
             - name: KABOM_ALLOWED_EMAILS
-              value: {{ .Values.env.allowedEmails | quote }}
+              value: {{ required "env.allowedEmails is required when env.authMode is \"google\" — an OAuth app that accepts any account looks identical to a working one" .Values.env.allowedEmails | quote }}
             {{- end }}
           # Actual credentials (S3 keys, basic-auth hash, Google OAuth
           # secret, session secret, and the non-secret values that travel
@@ -66,17 +124,29 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+          # The app runs a full S3 ingest inside FastAPI's lifespan, BEFORE
+          # uvicorn binds the socket, so nothing answers /healthz until that
+          # finishes — and an unreachable MinIO can stall it for minutes on
+          # boto3's default timeouts. A startupProbe holds liveness off
+          # until the port opens; without it the liveness probe kills the
+          # pod mid-startup and KaBOM CrashLoopBackOffs instead of coming up
+          # and serving last-known-good data behind a RED stale banner,
+          # which is the entire point of the design.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -7,8 +7,22 @@
 
 image:
   repository: ghcr.io/wawrepo/kabom
-  tag: latest
+  # Empty means "use Chart.yaml's appVersion", which is bumped with each
+  # release. Deliberately NOT "latest": with pullPolicy IfNotPresent a
+  # `helm upgrade` would render a byte-identical pod template, so no
+  # rollout would happen and Helm would report success while the old build
+  # kept running — and a pod recreated on a fresh node would silently pull
+  # whatever "latest" points at that day.
+  tag: ""
   pullPolicy: IfNotPresent
+
+# The published image is arm64-only — kaniko builds for the architecture it
+# runs on and cannot cross-build, so there is no manifest list. Pinning the
+# arch stops the scheduler placing the pod on an amd64 node, where it fails
+# with `exec format error` AND strands the volume there. Set to {} if you
+# ever publish a multi-arch image.
+nodeSelector:
+  kubernetes.io/arch: arm64
 
 # Ingress host. A placeholder — override it, there is no useful default.
 ingress:
@@ -20,8 +34,13 @@ ingress:
   # overrides. Turn it on and point secretName at whatever cert-manager (or
   # your own secret) provides the certificate for the real host.
   #
-  # If you leave TLS off, read `insecureCookies` below — the login session
-  # cookie will not survive plain HTTP without it.
+  # Left off so the chart renders and installs with no overrides, NOT
+  # because it is safe. With TLS off, every API call sends
+  # `Authorization: Basic` in clear text on every request — the bcrypt hash
+  # protects the password at rest, the wire carries the password itself.
+  # See also `insecureCookies` below: without it the session cookie will not
+  # survive plain HTTP at all. Turn TLS on for anything reachable by anyone
+  # but you.
   tls:
     enabled: false
     secretName: ""
@@ -44,6 +63,12 @@ resources:
 # node-local provisioner. That pins this Pod to whichever node the volume
 # was provisioned on; with one replica and a database rebuilt from the
 # bucket in seconds, that is an accepted trade-off, not a bug.
+# NOTE: install-time only. A PVC spec is immutable apart from a size
+# INCREASE, and only on a StorageClass with allowVolumeExpansion — which
+# node-local provisioners generally lack. Changing `size` or `storageClass`
+# on an existing release makes `helm upgrade` fail and leaves it in a failed
+# state; delete the PVC and reinstall instead. Safe to do: the database is
+# rebuilt from the bucket in seconds.
 persistence:
   storageClass: local-path
   size: 1Gi
@@ -70,6 +95,9 @@ env:
   s3Endpoint: ""
   s3Bucket: ""
   dbPath: /data/kabom.sqlite3
+  # Minutes between background re-ingests. Must be >= 1: the app reads this
+  # straight into asyncio.sleep(minutes * 60), so 0 is not "disabled", it is
+  # a tight loop pegging a CPU core against MinIO forever.
   refreshMinutes: 60
   # "basic" or "google" — see kabom/auth.py.
   authMode: basic
