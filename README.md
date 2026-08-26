@@ -1,4 +1,4 @@
-# KaBOM
+<img src="kabom/static/img/logo.svg" alt="KaBOM" width="480" />
 
 *"Your SBOMs, without the enterprise."*
 
@@ -7,6 +7,32 @@ Materials) out of MinIO (an S3-compatible object store) and lets one person
 search them. It is built for a 12-node Raspberry Pi homelab with 27 SBOM
 files, not for a company with thousands. It does not scan anything — Grype
 does that separately, and KaBOM only ever reads what that job produces.
+
+## Quick start
+
+Fastest way to see it running, with no real MinIO needed:
+
+```bash
+git clone git@github.com:WawRepo/KaBOM.git && cd KaBOM
+docker compose up --build
+# open http://localhost:8090 — login kabom-dev / kabom-dev-only-not-a-real-password
+```
+
+See "Try it locally with docker compose" below for what that seeds and how
+to get a green/amber/red freshness banner on demand.
+
+## Prerequisites
+
+| Tool | Needed for | Install |
+|---|---|---|
+| [`uv`](https://docs.astral.sh/uv/) | Running/testing the app outside Docker | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (or `brew install uv`) |
+| Docker + Docker Compose v2 | The quick start above, and the `docker build`/`docker run` examples further down | [docker.com](https://www.docker.com/) — Docker Desktop bundles both on macOS/Windows |
+| Node.js 18+ | Only the Playwright end-to-end suite (`tests/e2e/`) — not the app itself | `brew install node`, or [nodejs.org](https://nodejs.org/) |
+| [Helm](https://helm.sh/) 3.x | Only if you're touching `charts/kabom/` | `brew install helm` (macOS), or the official install script: `curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \| bash` (Linux/macOS) — see [helm.sh/docs/intro/install](https://helm.sh/docs/intro/install/) for apt/dnf/asdf/Windows options |
+
+Python itself is not a prerequisite to install separately — `uv` downloads
+and manages the right Python 3.12 for you (`uv python install 3.12`, done
+automatically by `uv sync`).
 
 ## Development
 
@@ -194,6 +220,9 @@ docker run --rm \
 
 ## Kubernetes: the Helm chart
 
+Needs Helm 3.x — see "Prerequisites" above for install options
+(`brew install helm` on macOS is the fastest path).
+
 `charts/kabom/` (HOME-236) is the packaged form of everything above —
 Deployment, Service, Ingress, and a PVC for `/data`. It **replaces the
 raw-manifest approach HOME-234 originally described**: `pi_cluster`'s
@@ -278,3 +307,7 @@ Google mode gates access with an explicit `KABOM_ALLOWED_EMAILS` allow-list
 (never "any Google account") and needs `KABOM_SESSION_SECRET` for its
 signed session cookie — the app refuses to start without one rather than
 generate it at boot.
+
+## License
+
+[MIT](LICENSE).
