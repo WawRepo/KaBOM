@@ -41,8 +41,18 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     sqlite3's implicit-transaction guessing. Foreign keys are off by default
     per-connection in SQLite, and schema.sql's `ON DELETE CASCADE` depends on
     them being on.
+
+    `check_same_thread=False`: HOME-231 opens one connection per HTTP request
+    (via a FastAPI dependency) and uses it only within that single request.
+    But FastAPI can run a sync dependency and the sync endpoint function on
+    two different threadpool worker threads for the same request, so the
+    connection can legitimately be created on one thread and used on
+    another. Only one thread ever touches a given connection at a time, so
+    this does not introduce real concurrent access — it just disables
+    sqlite3's same-thread assertion, which is stricter than what this app
+    actually needs.
     """
-    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
