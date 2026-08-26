@@ -1,0 +1,88 @@
+# One replica, always. KaBOM's data lives in a single SQLite file on a
+# ReadWriteOnce PVC (see pvc.yaml and values.yaml's persistence comment) —
+# a second replica could not attach the same volume, and there is exactly
+# one user to serve. Not a value: it never varies. See CLAUDE.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kabom
+  labels:
+    app.kubernetes.io/name: kabom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kabom
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kabom
+    spec:
+      containers:
+        - name: kabom
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          # The image runs as a fixed non-root uid/gid 1000 and needs no
+          # writable path except /data (see the Dockerfile) — so the root
+          # filesystem can stay read-only in the cluster too.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          env:
+            - name: KABOM_S3_ENDPOINT
+              value: {{ .Values.env.s3Endpoint | quote }}
+            - name: KABOM_S3_BUCKET
+              value: {{ .Values.env.s3Bucket | quote }}
+            - name: KABOM_DB_PATH
+              value: {{ .Values.env.dbPath | quote }}
+            - name: KABOM_REFRESH_MINUTES
+              value: {{ .Values.env.refreshMinutes | quote }}
+            - name: KABOM_AUTH
+              value: {{ .Values.env.authMode | quote }}
+            {{- if eq .Values.env.authMode "google" }}
+            - name: KABOM_ALLOWED_EMAILS
+              value: {{ .Values.env.allowedEmails | quote }}
+            {{- end }}
+          # Actual credentials (S3 keys, basic-auth hash, Google OAuth
+          # secret, session secret, and the non-secret values that travel
+          # with them — the basic-auth username, the Google client ID)
+          # come entirely from the existing Secret named below. This chart
+          # never sees their values, only the Secret's name.
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretName }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kabom-data
+        # Read-only root filesystem still needs somewhere for the
+        # Python/uvicorn stack's scratch files; KaBOM itself never writes
+        # here (see the Dockerfile's CMD comment). Matches the plain
+        # `docker run --tmpfs /tmp` example in README.md.
+        - name: tmp
+          emptyDir: {}

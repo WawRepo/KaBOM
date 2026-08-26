@@ -1,0 +1,76 @@
+# Default values for the kabom chart.
+#
+# This app has exactly one deployment, forever: one replica, one namespace
+# (whatever the caller installs it into), one node (SQLite on a PVC pins it
+# there anyway). Per HOME-236/CLAUDE.md's "take simple", none of that is a
+# value here — there is nothing to configure because it never varies.
+
+image:
+  repository: ghcr.io/wawrepo/kabom
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Ingress host. Matches the Terragrunt unit's `variable "host"` default in
+# pi_cluster (see HOME-234) — this is what ends up in the generated README
+# URL table over there.
+ingress:
+  host: kabom.szatanik.dev
+  # Leave empty to use the cluster's default IngressClass.
+  className: ""
+  annotations: {}
+  # TLS is off by default so `helm template`/`helm install` work with no
+  # overrides. pi_cluster turns this on and points secretName at whatever
+  # cert-manager (or SOPS) is providing the certificate for the real host.
+  tls:
+    enabled: false
+    secretName: ""
+
+# A single-user homelab app; these are generous headroom, not a tuned
+# guess. Raise them only if the app is actually observed hitting them.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Storage for the SQLite database file (KABOM_DB_PATH, mounted at /data —
+# see the Dockerfile). storageClass MUST be "local-path", never "nas-smb":
+# SMB gives no POSIX locking and SQLite corrupts on it. This is a standing
+# trap in this homelab (see CLAUDE.md's traps table) — it is the same
+# reason Immich's Postgres and Gitea's data both live on local-path too. It
+# also means this Pod is pinned to whichever node the PVC's volume was
+# provisioned on; that is an accepted trade-off, not a bug.
+persistence:
+  storageClass: local-path
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+# Plain (non-secret) KABOM_* environment variables. Actual credentials
+# (S3 keys, the basic-auth password hash, Google OAuth client secret, the
+# session secret, and — since they travel with those — the basic-auth
+# username and Google OAuth client ID) come from the existing Kubernetes
+# Secret named by `secretName` below, never from here.
+env:
+  s3Endpoint: ""
+  s3Bucket: ""
+  dbPath: /data/kabom.sqlite3
+  refreshMinutes: 60
+  # "basic" or "google" — see kabom/auth.py.
+  authMode: basic
+  # Comma-separated allow-list, only read when authMode is "google". Not a
+  # secret (it's a list of email addresses, not a credential), so it lives
+  # here rather than in the Secret.
+  allowedEmails: ""
+
+# Name of an EXISTING Kubernetes Secret (created by SOPS in pi_cluster —
+# see HOME-234) holding whichever of these keys the chosen authMode needs:
+#   KABOM_S3_ACCESS_KEY, KABOM_S3_SECRET_KEY        (always)
+#   KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH     (authMode: basic)
+#   KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET,
+#   KABOM_SESSION_SECRET                            (authMode: google)
+# This chart only references it by name (envFrom.secretRef) — it never
+# creates, reads, or templates the Secret's contents. The SOPS flow that
+# creates it in pi_cluster is unchanged by this chart's existence.
+secretName: kabom-secrets
