@@ -1,312 +1,134 @@
-<img src="kabom/static/img/logo.jpeg" alt="KaBOM" width="240" />
+<img src="kabom/static/img/logo.jpeg" alt="" width="140" />
 
-*"Your SBOMs, without the enterprise."*
+# KaBOM
 
-KaBOM is a small web app that reads CycloneDX SBOMs (Software Bill of
-Materials) out of MinIO (an S3-compatible object store) and lets one person
-search them. It is built for a 12-node Raspberry Pi homelab with 27 SBOM
-files, not for a company with thousands. It does not scan anything — Grype
-does that separately, and KaBOM only ever reads what that job produces.
+*Your SBOMs, without the enterprise.*
+
+Reads CycloneDX SBOMs out of MinIO and lets one person search them:
+**"do we have this package, and where?"** Built for a homelab with 27 SBOM
+files, not a company with thousands. It never scans anything — Grype does that
+elsewhere, KaBOM only reads what that job wrote.
 
 ## Quick start
 
-Fastest way to see it running, with no real MinIO needed:
-
 ```bash
-git clone git@github.com:WawRepo/KaBOM.git && cd KaBOM
 docker compose up --build
-# open http://localhost:8090 — login kabom-dev / kabom-dev-only-not-a-real-password
+# http://localhost:8090 — login: kabom-dev / kabom-dev-only-not-a-real-password
 ```
 
-See "Try it locally with docker compose" below for what that seeds and how
-to get a green/amber/red freshness banner on demand.
+Brings up KaBOM against a local MinIO seeded from `tests/samples/`. No real
+credentials, never touches the production bucket. `docker compose down -v`
+tears it down.
 
-## Prerequisites
+The default seed is deliberately **red** — one good sample, one corrupted, so
+the banner reads "1 of 2 read" out of the box. `KABOM_SEED_SCENARIO=fresh` or
+`=amber` gives the other two colours.
 
-| Tool | Needed for | Install |
+## The freshness banner
+
+The one thing KaBOM must never do is answer *"no, we don't have that package"*
+from month-old data. So every page carries a banner — always visible, never
+dismissible, driven by the **oldest** SBOM's age, never the newest and never
+an average:
+
+| | When | Example |
 |---|---|---|
-| [`uv`](https://docs.astral.sh/uv/) | Running/testing the app outside Docker | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (or `brew install uv`) |
-| Docker + Docker Compose v2 | The quick start above, and the `docker build`/`docker run` examples further down | [docker.com](https://www.docker.com/) — Docker Desktop bundles both on macOS/Windows |
-| Node.js 18+ | Only the Playwright end-to-end suite (`tests/e2e/`) — not the app itself | `brew install node`, or [nodejs.org](https://nodejs.org/) |
-| [Helm](https://helm.sh/) 3.x | Only if you're touching `charts/kabom/` | `brew install helm` (macOS), or the official install script: `curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \| bash` (Linux/macOS) — see [helm.sh/docs/intro/install](https://helm.sh/docs/intro/install/) for apt/dnf/asdf/Windows options |
+| 🟢 | oldest < 24h, nothing failed | `Updated 20 minutes ago · 27 of 27 read` |
+| 🟡 | oldest 24h–7d | `Updated 2 days ago · 27 of 27 read` |
+| 🔴 | oldest ≥ 7d, age unknown, **or** any file failed to parse | `STALE — oldest data is 39 days old · 25 of 27 read` |
 
-Python itself is not a prerequisite to install separately — `uv` downloads
-and manages the right Python 3.12 for you (`uv python install 3.12`, done
-automatically by `uv sync`).
+When it is red, search results get a red border too — the warning belongs next
+to the answer, not only at the top of the page.
 
 ## Development
 
 ```bash
-uv sync                  # install dependencies
-uv run pytest            # run tests
-uv run ruff check .      # lint
-uv run ruff format .     # format
-uv run uvicorn kabom.main:app --reload    # dev server
+uv sync                                     # install (fetches its own Python 3.12)
+uv run pytest                               # tests
+uv run ruff check . && uv run ruff format . # lint, format
+uv run uvicorn kabom.main:app --reload      # dev server
+./scripts/build-css.sh                      # recompile Tailwind after template edits
 ```
 
-The dev server needs `KABOM_S3_ENDPOINT`, `KABOM_S3_BUCKET`,
-`KABOM_S3_ACCESS_KEY`, `KABOM_S3_SECRET_KEY` set to point at a MinIO, plus
-auth (HOME-233) — either `KABOM_AUTH=basic` with `KABOM_BASIC_USER` and a
-bcrypt `KABOM_BASIC_PASSWORD_HASH` (never a plaintext password), or
-`KABOM_AUTH=google` with `KABOM_GOOGLE_CLIENT_ID`/`KABOM_GOOGLE_CLIENT_SECRET`,
-`KABOM_ALLOWED_EMAILS`, and `KABOM_SESSION_SECRET`. See "Try it locally with
-docker compose" below for the fastest way to get all of that (including
-sample data and a dev-only basic-auth login) with one command.
+The dev server needs the `KABOM_*` variables under [Configuration](#configuration);
+`docker compose` sets all of them for you.
 
-## The UI
+Three screens, server-rendered with Jinja2 + HTMX, Tailwind via the standalone
+CLI — no npm, no bundler, no `node_modules` in the runtime image. Search works
+with the keyboard alone, and with HTMX blocked it degrades to a plain form GET
+rather than a dead box.
 
-Three screens, server-rendered with Jinja2 + HTMX, styled with Tailwind CSS
-(compiled by the standalone CLI, not npm):
-
-- `/` — search, grouped by package name, results stream in as you type.
-- `/sboms` — every ingested SBOM as a card, sorted **oldest first**.
-- `/sboms/{id}` — one SBOM's full component list, filterable in the browser.
-
-Every page also renders the **freshness banner** — see CLAUDE.md's "the thing
-KaBOM must never do." It reads `GET /api/status` and uses the **oldest**
-SBOM's age:
-
-| Level | When | Looks like |
-|---|---|---|
-| GREEN | oldest SBOM < 24 hours old, nothing failed to parse | "Updated 20 minutes ago · 27 of 27 read" |
-| AMBER | oldest SBOM between 24 hours and 7 days old | "Updated 2 days ago · 27 of 27 read" |
-| RED | oldest SBOM ≥ 7 days old, **or** its age is unknown, **or** any file failed to parse this run | "STALE — oldest data is 39 days old · 25 of 27 read" + "These answers may be wrong. Check the SBOM job." |
-
-A failed parse forces RED on its own, regardless of age — see
-`kabom.main._freshness_banner`. When the banner is RED, the search results on
-`/` also get a visible red border (`kabom/templates/_search_results.html`) —
-the warning sits next to the answer, not only at the top of the page.
-
-**Progressive enhancement, not a JS-only widget.** `/`'s search box is a
-plain `<form method="get" action="/">`. With HTMX loaded, typing fires a
-debounced (300ms) GET back to the same `/` route and HTMX swaps in just the
-results (`hx-select` + `hx-swap="outerHTML"`) — there is no separate
-JSON-for-the-UI endpoint. With HTMX blocked or unavailable, the same form
-still submits normally (Enter, or the visible Search button), reloading `/`
-with `?q=...` and getting the exact same server-rendered result. `/sboms/{id}`'s
-component filter is a few lines of inline vanilla JS; without JavaScript the
-full component list is still there, just unfiltered — never a dead control.
-
-Dark mode follows `prefers-color-scheme` automatically (Tailwind v4's default
-`dark:` behaviour) — no toggle, no stored preference.
-
-### Regenerating the compiled CSS
-
-`kabom/static/css/style.css` is compiled from `kabom/static/css/input.css` by
-the Tailwind **standalone CLI** — a single downloaded binary, not npm. There
-is no JS build step and no `node_modules` in the runtime image (see
-CLAUDE.md and the Dockerfile's `tailwind` build stage, which recompiles it
-fresh from source on every `docker build`).
-
-To regenerate it locally after editing templates or `input.css`:
-
-```bash
-./scripts/build-css.sh            # downloads the CLI on first run, then builds once
-./scripts/build-css.sh --watch    # rebuild on every change
-```
-
-## Try it locally with docker compose
-
-`docker-compose.yml` (repo root) is **dev/test only** — never part of the
-production image or the k8s deploy. It builds the same production Dockerfile
-and brings up KaBOM against a local MinIO seeded with the committed sample
-CycloneDX files (`tests/samples/`), so there is a real, working instance to
-click through without touching the real storage-host MinIO.
-
-```bash
-docker compose up --build
-# open http://localhost:8090/ — basic-auth login: kabom-dev /
-# kabom-dev-only-not-a-real-password (fixed, dev-only, see docker-compose.yml)
-docker compose down -v            # tear down; -v also drops the seeded data
-```
-
-The default seed scenario (`mixed`) uploads both committed samples — one
-good, one deliberately corrupted — so the freshness banner comes up **RED**
-out of the box: "1 of 2 read." That is intentional, not a bug in the demo: it
-is the real failure-reporting behaviour the whole project exists for, and
-it's the easiest thing to show accidentally hiding. Two more scenarios are
-available for a GREEN or AMBER banner instead:
-
-```bash
-KABOM_SEED_SCENARIO=fresh docker compose up --build   # GREEN
-KABOM_SEED_SCENARIO=amber docker compose up --build   # AMBER
-```
-
-See `scripts/seed_minio.py` for exactly what each scenario uploads.
-
-## End-to-end tests (Playwright)
-
-`tests/e2e/` is a small Node/Playwright project — Node tooling is fine here,
-it is a **test suite**, not the runtime image. It drives a real browser
-against the docker-compose stack above and covers what unit tests can't:
-real typing/debounce, real HTMX swaps, a real mobile viewport, and real
-JavaScript-blocked degradation.
+### End-to-end tests
 
 ```bash
 ./tests/e2e/run-e2e.sh
 ```
 
-This installs Playwright's dependencies on first run (`npm install` +
-`npx playwright install chromium`), then cycles through all three seed
-scenarios — `mixed` (RED + red-border + JS-blocked + all three screens +
-keyboard search), `fresh` (GREEN), `amber` (AMBER) — bringing docker compose
-up and down around each. Set `PLAYWRIGHT_INSTALL_DEPS=1` before first run if
-you also need Playwright's OS-level browser dependencies installed (Linux
-only, needs root — this is what a CI runner would do).
+Playwright against the real compose stack, cycling all three seed scenarios:
+keyboard search, all three screens, all three banner colours, the red border,
+and JS-blocked degradation, on desktop and mobile viewports. Runs in CI too.
 
-To run it by hand against a stack you already have up:
+## Configuration
 
-```bash
-docker compose up -d --build
-cd tests/e2e && npm install && npx playwright install chromium
-KABOM_SEED_SCENARIO=mixed npx playwright test    # matches whatever scenario is seeded
-cd ../.. && docker compose down -v
+| Variable | |
+|---|---|
+| `KABOM_S3_ENDPOINT` `KABOM_S3_BUCKET` `KABOM_S3_ACCESS_KEY` `KABOM_S3_SECRET_KEY` | MinIO, read-only. Required. |
+| `KABOM_DB_PATH` | SQLite file. Defaults to `/data/kabom.sqlite3` in the image. |
+| `KABOM_REFRESH_MINUTES` | Background re-ingest interval. Default 60. |
+| `KABOM_AUTH` | `basic` or `google`. Required — there is no unauthenticated mode. |
+| `KABOM_BASIC_USER` `KABOM_BASIC_PASSWORD_HASH` | Basic mode. A bcrypt hash, never a plaintext password. |
+| `KABOM_GOOGLE_CLIENT_ID` `KABOM_GOOGLE_CLIENT_SECRET` `KABOM_ALLOWED_EMAILS` `KABOM_SESSION_SECRET` | Google mode. `ALLOWED_EMAILS` is an explicit allow-list, never a domain match. The app refuses to start without a session secret rather than generating one. |
+
+## API
+
+```
+GET  /                          search UI
+GET  /sboms                     inventory UI, oldest first
+GET  /sboms/{id}                contents UI
+GET  /api/search?q=&version=    substring name match, exact optional version
+GET  /api/sboms
+GET  /api/sboms/{id}
+GET  /api/status                last run, plus age of the OLDEST sbom
+POST /admin/refresh             ingest now
+GET  /healthz                   the only unauthenticated route
 ```
 
-This runs in CI too (`.github/workflows/ci.yml`'s `e2e` job) — every push
-brings the docker-compose stack up for real and runs the full Playwright
-suite against it, not just the Python unit tests.
+Every search result carries its own `generated_at`, so nothing has to make a
+second request to know whether to trust the first. No pagination, no fuzzy
+matching, no CVE data — KaBOM has no opinion about what is dangerous.
 
-## Container image
+## Image
 
-`docker build .` produces the same multi-arch image (`linux/amd64` +
-`linux/arm64`, via the Dockerfile's `tailwind` build stage and
-`$TARGETARCH`) that CI's `docker` job builds on every push, without pushing
-it anywhere.
-
-**Publishing an image is a deliberate act, not a side effect of pushing to
-main.** Creating a GitHub Release with a semver tag (`vX.Y.Z`, e.g.
-`v0.2.0`) triggers `.github/workflows/release.yml`, which builds and pushes
-both architectures to `ghcr.io/wawrepo/kabom` (tagged `X.Y.Z`, `X.Y`, and
-`latest`), using GHCR's standard `GITHUB_TOKEN` login — no separate secret to
-create or rotate. A release whose tag is not `vMAJOR.MINOR.PATCH` fails the
-workflow instead of publishing. Use GitHub's own "Generate release notes"
-button when drafting the release — no changelog tool here. This is the only
-workflow that pushes an image anywhere; `ci.yml`'s `docker` job only builds,
-to catch a broken Dockerfile on every push.
-
-### Running the image: non-root, read-only-root-filesystem
-
-The image runs as a fixed non-root user (`kabom`, uid/gid 1000), and nothing
-it does at runtime needs to write anywhere except the SQLite database file —
-see `kabom/config.py`'s `load_db_path` and `kabom/db.py`. That means the
-container can run with a read-only root filesystem, given exactly one
-writable mount:
+Multi-arch (`amd64` + `arm64`), non-root, runs with a read-only root
+filesystem given one writable mount for the SQLite file:
 
 ```bash
-mkdir -p ./data
-docker run --rm \
-  --read-only --tmpfs /tmp \
-  -v "$(pwd)/data:/data" \
-  -e KABOM_DB_PATH=/data/kabom.sqlite3 \
-  -e KABOM_S3_ENDPOINT=... -e KABOM_S3_BUCKET=... \
-  -e KABOM_S3_ACCESS_KEY=... -e KABOM_S3_SECRET_KEY=... \
-  -e KABOM_AUTH=basic -e KABOM_BASIC_USER=... -e KABOM_BASIC_PASSWORD_HASH=... \
-  -p 8000:8000 \
-  ghcr.io/wawrepo/kabom:latest
+docker run --rm --read-only --tmpfs /tmp -v "$(pwd)/data:/data" \
+  -e KABOM_S3_ENDPOINT=... -e KABOM_AUTH=basic ... \
+  -p 8000:8000 ghcr.io/wawrepo/kabom:latest
 ```
 
-- `KABOM_DB_PATH` already defaults to `/data/kabom.sqlite3` in the image, so
-  it only needs overriding if the mount point differs.
-- `/data` must be a real writable volume (a bind mount, a named volume, or a
-  Kubernetes `PersistentVolumeClaim` — whichever the deployer is using); the
-  SQLite file cannot live anywhere else once the root filesystem is
-  read-only.
-- `--tmpfs /tmp` is there for anything in the Python/uvicorn stack that
-  expects a scratch directory to exist; KaBOM itself never writes to it.
-- If S3/MinIO is unreachable, the app still starts and serves `/healthz` —
-  ingest failures are logged and recorded, never fatal (see CLAUDE.md's "must
-  never show stale data as though it were current").
+Publishing is deliberate: a **GitHub Release** with a `vX.Y.Z` tag builds and
+pushes to GHCR (tagged `X.Y.Z`, `X.Y`, `latest`). A non-semver tag fails the
+workflow instead of publishing, and pushing to `main` never publishes at all.
 
-## Kubernetes: the Helm chart
-
-Needs Helm 3.x — see "Prerequisites" above for install options
-(`brew install helm` on macOS is the fastest path).
-
-`charts/kabom/` (HOME-236) is the packaged form of everything above —
-Deployment, Service, Ingress, and a PVC for `/data`. It **replaces the
-raw-manifest approach HOME-234 originally described**: `infra-repo`'s
-Terragrunt unit for KaBOM is a `helm_release` pointing at this chart, not a
-set of hand-written Kubernetes YAML files. That `infra-repo`-side change is
-tracked and done there, not in this repo.
-
-The chart is deliberately minimal — one replica, one namespace (whichever
-the caller installs it into), `ClusterIP` only, no autoscaling — because
-KaBOM has exactly one deployment, forever. See `charts/kabom/values.yaml`
-for the full comments on why each of those is fixed rather than a value.
-
-It **does not create the Kubernetes Secret** holding the real credentials
-(S3 keys, the basic-auth password hash, Google OAuth client secret, the
-session secret). That Secret is created by `infra-repo`'s SOPS flow, same as
-before — the chart only references it by name (`secretName`) via
-`envFrom.secretRef`, and never templates a raw secret value into the chart.
+## Kubernetes
 
 ```bash
 helm install kabom charts/kabom \
-  --set env.s3Endpoint=minio.storage-host.example.invalid:9000 \
-  --set env.s3Bucket=sboms \
-  --set secretName=kabom-secrets
-
-# upgrading in place, e.g. after a release bump or a values change:
-helm upgrade kabom charts/kabom \
-  --set env.s3Endpoint=minio.storage-host.example.invalid:9000 \
-  --set env.s3Bucket=sboms \
-  --set image.tag=0.3.1 \
-  --set secretName=kabom-secrets
+  --set env.s3Endpoint=... --set env.s3Bucket=sboms --set secretName=kabom-secrets
 ```
 
-Required overrides (no sane default exists): `env.s3Endpoint`,
-`env.s3Bucket`, and `secretName` (the existing Secret to read credentials
-from). Everything else in `values.yaml` — image tag, `ingress.host`
-(defaults to `kabom.example.invalid`), resource limits, `persistence.storageClass`
-— has a working default.
+Deployment, Service, Ingress, PVC. One replica, `ClusterIP`, no autoscaling —
+KaBOM has exactly one deployment, forever. The chart **does not create the
+Secret**; it references an existing one by name, so the SOPS flow in
+`infra-repo` is unchanged.
 
-**`persistence.storageClass` must stay `local-path`, never `smb-storage`** — see
-CLAUDE.md's traps table: SMB gives no POSIX locking and SQLite corrupts on
-it. `values.yaml` says so again right next to the field.
+`persistence.storageClass` must stay `local-path`, never `smb-storage` — SMB has
+no POSIX locking and SQLite corrupts on it.
 
-Validate the chart without touching any cluster:
-
-```bash
-helm lint charts/kabom
-helm template kabom charts/kabom
-```
-
-Both run in CI (`.github/workflows/ci.yml`'s `helm` job) on every push.
-
-## Status
-
-HOME-228 through HOME-234 and HOME-236 are done: S3 ingest, SQLite storage,
-the search API, the UI, auth, this repo's half of packaging (multi-arch
-image, non-root, read-only-root-filesystem-ready), and the Helm chart.
-Today the app serves (every route below except `/healthz` requires auth —
-see "Auth"):
-
-```
-GET  /healthz              -> {"status": "ok"}  (no auth)
-POST /admin/refresh        -> trigger one ingest pass on demand
-GET  /api/search?q=...     -> [{subject, kind, name, version, purl, generated_at}]
-GET  /api/sboms            -> [{id, subject, kind, generated_at, component_count}]
-GET  /api/sboms/{id}       -> {id, subject, kind, generated_at, components: [...]}
-GET  /api/status           -> {finished_at, sboms_seen, sboms_failed, ok, age_seconds}
-GET  /                     -> search UI
-GET  /sboms                -> inventory UI
-GET  /sboms/{id}           -> contents UI
-GET  /auth/login           -> start Google sign-in (KABOM_AUTH=google only)
-GET  /auth/callback        -> Google OAuth callback (KABOM_AUTH=google only)
-GET  /auth/logout          -> clear the session (KABOM_AUTH=google only)
-```
-
-## Auth
-
-`KABOM_AUTH` picks the mode — `basic` or `google` — there is no "no auth"
-mode. See `kabom/auth.py`'s module docstring for exactly what each one
-checks and why. Basic auth is meant to be finished, not a stopgap: a bcrypt
-password hash, never a plaintext password in an environment variable.
-Google mode gates access with an explicit `KABOM_ALLOWED_EMAILS` allow-list
-(never "any Google account") and needs `KABOM_SESSION_SECRET` for its
-signed session cookie — the app refuses to start without one rather than
-generate it at boot.
+`helm lint charts/kabom` and `helm template kabom charts/kabom` validate the
+chart without a cluster. Both run in CI.
 
 ## License
 
