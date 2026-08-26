@@ -1,37 +1,107 @@
 name: Release
 
-# Publishes the image to GHCR when a GitHub Release is published — not on
-# every push to main, and not on a bare tag push either. A Release is a
-# deliberate human act that always carries release notes, which a raw tag
-# push does not guarantee.
+# Cut a release by hand: Actions -> Release -> Run workflow. There is no
+# tag to create and no version to think of — the last tag is read, the
+# chosen part is bumped (patch unless you say otherwise), the release is
+# created with generated notes, and the image is published to GHCR.
 #
-# This is the only workflow that pushes a KaBOM image anywhere; ci.yml's
-# `image` job builds with --no-push, to catch a broken Dockerfile on every
-# push.
-#
-# Built with Kaniko on the self-hosted ARC runner, in kubernetes mode: no
-# Docker daemon and no privileged container. Auth uses the repo's own
-# GITHUB_TOKEN, so there is no new secret to create or rotate.
+# Deliberately manual. Publishing an image is a decision, not something a
+# push to main should do on its own. ci.yml's `image` job builds with
+# --no-push on every push, so a broken Dockerfile is caught long before
+# anyone reaches for this.
 #
 # ⚠️  ARCHITECTURE: Kaniko builds for the architecture it runs on and
 #     cannot cross-build, so this publishes an **arm64-only** image. It
 #     will not start on an amd64 node — a single-arch image fails at
-#     runtime, not at deploy. That is fine while KaBOM's SQLite PVC pins it
-#     to one arm64 node; it stops being fine the moment it needs to land
-#     anywhere else.
+#     runtime, not at deploy. Fine while KaBOM's SQLite PVC pins it to one
+#     arm64 node; it stops being fine the moment it needs to land anywhere
+#     else.
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which part of the version to increase"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 env:
   REGISTRY: ghcr.io
-  # Matches the actual GitHub org/repo casing (git@github.com:WawRepo/KaBOM.git),
-  # lowercased because image repository names on GHCR must be lowercase.
+  # Matches the actual GitHub org/repo casing (WawRepo/KaBOM), lowercased
+  # because image repository names on GHCR must be lowercase.
   IMAGE_NAME: wawrepo/kabom
 
 jobs:
-  publish:
+  tag:
+    # A normal runner, not the Kaniko container: this job needs Node for
+    # the JavaScript actions below, and the Kaniko image has none.
+    runs-on: arc-k8s-kabom
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are what the version is derived from, and a shallow clone
+          # has none of them.
+          fetch-depth: 0
+
+      - name: Work out the next version
+        id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -eu
+          latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+
+          if [ -z "$latest" ]; then
+            # First release. Starts at v0.1.0 rather than v0.0.1: this is a
+            # working app, not a patch to nothing.
+            next="v0.1.0"
+          else
+            v="${latest#v}"
+            major="${v%%.*}"
+            rest="${v#*.}"
+            minor="${rest%%.*}"
+            patch="${rest#*.}"
+            case "$BUMP" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "::error::Unknown bump '$BUMP'"; exit 1 ;;
+            esac
+            next="v${major}.${minor}.${patch}"
+          fi
+
+          echo "Last tag: ${latest:-none}. Releasing: $next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag and the release
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        with:
+          script: |
+            // One call creates the tag at this commit AND the release,
+            // with notes generated from the commits since the last tag.
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.TAG,
+              target_commitish: context.sha,
+              name: process.env.TAG,
+              generate_release_notes: true,
+            });
+            core.info(`Released ${data.tag_name}: ${data.html_url}`);
+
+  image:
+    # Kaniko: no Docker daemon and no privileged container, which is what
+    # makes this work on an ARC runner in kubernetes mode.
+    needs: tag
     runs-on: arc-k8s-kabom
     permissions:
       contents: read
@@ -42,45 +112,26 @@ jobs:
       image: gcr.io/kaniko-project/executor:v1.23.2-debug
     steps:
       # Deliberately no actions/checkout: the Kaniko image has no Node, so
-      # JavaScript actions cannot run in it. The tag is validated from the
-      # event payload and Kaniko fetches the repo itself from the git
-      # context below.
-      - name: Validate the release tag is semantic versioning
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          case "$TAG" in
-            v[0-9]*.[0-9]*.[0-9]*)
-              # Reject a trailing suffix that the glob above still admits,
-              # e.g. v1.2.3-rc1 or v1.2.3.4.
-              rest="${TAG#v}"
-              case "$rest" in
-                *[!0-9.]*|*.*.*.*) echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH."; exit 1 ;;
-              esac
-              ;;
-            *)
-              echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH — refusing to publish an image for it."
-              exit 1
-              ;;
-          esac
-          echo "Tag $TAG accepted."
-
-      # TARGETARCH is passed explicitly — see ci.yml. Kaniko does not
-      # provide BuildKit's automatic platform args, and arm64 is both what
-      # this runner is and the only architecture kaniko can produce here.
+      # JavaScript actions cannot run in it. Kaniko fetches the repo itself
+      # from the git context below, pinned to the tag just created.
+      #
+      # TARGETARCH is passed explicitly because it is one of BuildKit's
+      # automatic platform build args and Kaniko does not provide them —
+      # the Dockerfile's `case "$TARGETARCH"` picks the Tailwind binary and
+      # fails under `set -u` when it is empty.
       - name: Build and push to GHCR
         env:
-          # See ci.yml: kaniko maps GIT_TOKEN to the username with an empty
-          # password, which GitHub rejects. x-access-token + token is the
-          # form that works for a private repo.
+          # Kaniko maps GIT_TOKEN to the *username* with an empty password,
+          # which GitHub rejects. x-access-token + the token as password is
+          # the form that works.
           GIT_USERNAME: x-access-token
           GIT_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           set -eu
-          version="${TAG#v}"
-          minor="${version%.*}"
+          minor="${VERSION%.*}"
 
           # Kaniko reads registry credentials from a docker config file
           # rather than a `docker login`, there being no daemon to log in to.
@@ -92,7 +143,7 @@ jobs:
             --context "git://github.com/${{ github.repository }}.git#refs/tags/${TAG}" \
             --dockerfile Dockerfile \
             --build-arg TARGETARCH=arm64 \
-            --destination "$REGISTRY/$IMAGE_NAME:$version" \
+            --destination "$REGISTRY/$IMAGE_NAME:$VERSION" \
             --destination "$REGISTRY/$IMAGE_NAME:$minor" \
             --destination "$REGISTRY/$IMAGE_NAME:latest" \
             --verbosity info
