@@ -1,15 +1,24 @@
 name: Release
 
-# Publishes a multi-arch (linux/amd64 + linux/arm64) image to GHCR when a
-# GitHub Release is published — not on every push to main, and not on a
-# bare tag push either. A Release is a deliberate human act that always
-# carries release notes, which a raw tag push does not guarantee.
+# Publishes the image to GHCR when a GitHub Release is published — not on
+# every push to main, and not on a bare tag push either. A Release is a
+# deliberate human act that always carries release notes, which a raw tag
+# push does not guarantee.
 #
 # This is the only workflow that pushes a KaBOM image anywhere; ci.yml's
-# `docker` job only builds, to catch a broken Dockerfile on every push.
+# `image` job builds with --no-push, to catch a broken Dockerfile on every
+# push.
 #
-# Auth uses the repo's own GITHUB_TOKEN (via `permissions: packages: write`
-# below) — no new secret to create or rotate.
+# Built with Kaniko on the self-hosted ARC runner, in kubernetes mode: no
+# Docker daemon and no privileged container. Auth uses the repo's own
+# GITHUB_TOKEN, so there is no new secret to create or rotate.
+#
+# ⚠️  ARCHITECTURE: Kaniko builds for the architecture it runs on and
+#     cannot cross-build, so this publishes an **arm64-only** image. It
+#     will not start on an amd64 node — a single-arch image fails at
+#     runtime, not at deploy. That is fine while KaBOM's SQLite PVC pins it
+#     to one arm64 node; it stops being fine the moment it needs to land
+#     anywhere else.
 
 on:
   release:
@@ -23,51 +32,58 @@ env:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: arc-k8s-kabom
     permissions:
       contents: read
       packages: write
+    container:
+      # The -debug tag is the one with a shell, which the Actions runner
+      # needs to execute `run:` steps at all.
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name }}
-
+      # Deliberately no actions/checkout: the Kaniko image has no Node, so
+      # JavaScript actions cannot run in it. The tag is validated from the
+      # event payload and Kaniko fetches the repo itself from the git
+      # context below.
       - name: Validate the release tag is semantic versioning
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH — refusing to publish an image for it."
-            exit 1
-          fi
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              # Reject a trailing suffix that the glob above still admits,
+              # e.g. v1.2.3-rc1 or v1.2.3.4.
+              rest="${TAG#v}"
+              case "$rest" in
+                *[!0-9.]*|*.*.*.*) echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH."; exit 1 ;;
+              esac
+              ;;
+            *)
+              echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH — refusing to publish an image for it."
+              exit 1
+              ;;
+          esac
+          echo "Tag $TAG accepted."
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Build and push to GHCR
+        env:
+          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          version="${TAG#v}"
+          minor="${version%.*}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          # Kaniko reads registry credentials from a docker config file
+          # rather than a `docker login`, there being no daemon to log in to.
+          mkdir -p /kaniko/.docker
+          auth=$(printf '%s:%s' "${{ github.actor }}" "$GIT_TOKEN" | base64 | tr -d '\n')
+          printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" "$auth" > /kaniko/.docker/config.json
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive image tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
-            type=raw,value=latest
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          /kaniko/executor \
+            --context "git://github.com/${{ github.repository }}.git#refs/tags/${TAG}" \
+            --dockerfile Dockerfile \
+            --destination "$REGISTRY/$IMAGE_NAME:$version" \
+            --destination "$REGISTRY/$IMAGE_NAME:$minor" \
+            --destination "$REGISTRY/$IMAGE_NAME:latest" \
+            --verbosity info

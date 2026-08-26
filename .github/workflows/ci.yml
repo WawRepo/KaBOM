@@ -7,9 +7,9 @@ on:
 
 jobs:
   test:
-    # GitHub's hosted runners — this repo is not on the self-hosted ARC
-    # fleet and does not need to be.
-    runs-on: ubuntu-latest
+    # Self-hosted ARC runner in the cluster. Pure Python — no container
+    # runtime involved, so kubernetes mode needs nothing special here.
+    runs-on: arc-k8s-kabom
     steps:
       - uses: actions/checkout@v4
 
@@ -33,19 +33,46 @@ jobs:
       - name: Test
         run: uv run pytest
 
-  docker:
-    runs-on: ubuntu-latest
+  image:
+    # Builds the image with Kaniko — no Docker daemon, no privileged
+    # container, which is what makes this work on an ARC runner in
+    # kubernetes mode. Build only: `--no-push` proves the Dockerfile is
+    # sound on every push without publishing anything. Releases are
+    # published separately (see release.yml).
+    #
+    # Kaniko builds for whatever architecture it runs on and cannot
+    # cross-build, so this is an arm64 image built natively on the cluster.
+    runs-on: arc-k8s-kabom
+    container:
+      # The -debug tag is the one with a shell, which the Actions runner
+      # needs to execute `run:` steps at all.
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build image
-        run: docker build -t kabom:ci .
+      # Deliberately no actions/checkout: the Kaniko image has no Node, so
+      # JavaScript actions cannot run in it. Kaniko fetches the repo itself
+      # from the git context below instead, which needs no checkout step.
+      - name: Build image (no push)
+        env:
+          # Kaniko reads this to clone a private repo.
+          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          /kaniko/executor \
+            --context "git://github.com/${{ github.repository }}.git#${{ github.ref }}" \
+            --dockerfile Dockerfile \
+            --no-push \
+            --verbosity info
 
   e2e:
-    # Playwright, driving a real browser against the docker-compose stack
-    # (see docker-compose.yml, tests/e2e/, and the README's "End-to-end
-    # tests" section). ubuntu-latest ships Docker + Compose v2 and Node
-    # already, so this needs no extra setup beyond the OS browser deps.
+    # The one job that genuinely needs a container runtime: it runs
+    # `docker compose up` (MinIO + KaBOM) and drives a real browser at it.
+    # Kaniko cannot help here — it builds images, it does not run them.
+    #
+    # Left on a GitHub-hosted runner because the alternative on a
+    # kubernetes-mode ARC runner is a docker-in-docker service container,
+    # and that needs --privileged: the exact thing Kaniko was chosen to
+    # avoid. One privileged sidecar for one job may still be the right
+    # trade — see the README — but it is a deliberate decision, not a
+    # default.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +86,7 @@ jobs:
     # Renders the chart with no live cluster involved — helm lint and helm
     # template are both purely local/offline. This never installs anything
     # anywhere; deploying the chart is the operator's job, not this repo's CI.
-    runs-on: ubuntu-latest
+    runs-on: arc-k8s-kabom
     steps:
       - uses: actions/checkout@v4
 
