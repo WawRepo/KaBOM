@@ -141,11 +141,69 @@ This runs in CI too (`.github/workflows/ci.yml`'s `e2e` job) — every push
 brings the docker-compose stack up for real and runs the full Playwright
 suite against it, not just the Python unit tests.
 
+## Container image
+
+`docker build .` produces the same multi-arch image (`linux/amd64` +
+`linux/arm64`, via the Dockerfile's `tailwind` build stage and
+`$TARGETARCH`) that CI's `docker` job builds on every push, without pushing
+it anywhere.
+
+**Publishing an image is a deliberate act, not a side effect of pushing to
+main.** Creating a GitHub Release with a semver tag (`vX.Y.Z`, e.g.
+`v0.2.0`) triggers `.github/workflows/release.yml`, which builds and pushes
+both architectures to `ghcr.io/wawrepo/kabom` (tagged `X.Y.Z`, `X.Y`, and
+`latest`), using GHCR's standard `GITHUB_TOKEN` login — no separate secret to
+create or rotate. A release whose tag is not `vMAJOR.MINOR.PATCH` fails the
+workflow instead of publishing. Use GitHub's own "Generate release notes"
+button when drafting the release — no changelog tool here. This is the only
+workflow that pushes an image anywhere; `ci.yml`'s `docker` job only builds,
+to catch a broken Dockerfile on every push.
+
+### Running the image: non-root, read-only-root-filesystem
+
+The image runs as a fixed non-root user (`kabom`, uid/gid 1000), and nothing
+it does at runtime needs to write anywhere except the SQLite database file —
+see `kabom/config.py`'s `load_db_path` and `kabom/db.py`. That means the
+container can run with a read-only root filesystem, given exactly one
+writable mount:
+
+```bash
+mkdir -p ./data
+docker run --rm \
+  --read-only --tmpfs /tmp \
+  -v "$(pwd)/data:/data" \
+  -e KABOM_DB_PATH=/data/kabom.sqlite3 \
+  -e KABOM_S3_ENDPOINT=... -e KABOM_S3_BUCKET=... \
+  -e KABOM_S3_ACCESS_KEY=... -e KABOM_S3_SECRET_KEY=... \
+  -e KABOM_AUTH=basic -e KABOM_BASIC_USER=... -e KABOM_BASIC_PASSWORD_HASH=... \
+  -p 8000:8000 \
+  ghcr.io/wawrepo/kabom:latest
+```
+
+- `KABOM_DB_PATH` already defaults to `/data/kabom.sqlite3` in the image, so
+  it only needs overriding if the mount point differs.
+- `/data` must be a real writable volume (a bind mount, a named volume, or a
+  Kubernetes `PersistentVolumeClaim` — whichever the deployer is using); the
+  SQLite file cannot live anywhere else once the root filesystem is
+  read-only.
+- `--tmpfs /tmp` is there for anything in the Python/uvicorn stack that
+  expects a scratch directory to exist; KaBOM itself never writes to it.
+- If S3/MinIO is unreachable, the app still starts and serves `/healthz` —
+  ingest failures are logged and recorded, never fatal (see CLAUDE.md's "must
+  never show stale data as though it were current").
+
+**Actual Kubernetes deployment — Ingress, the PVC for `/data`, the Secret
+holding the basic-auth hash or Google OAuth credentials, and the Terragrunt
+unit that wires it all into the cluster — is out of scope for this repo.**
+That lives in `infra-repo`, alongside every other homelab service's deploy
+config, not here.
+
 ## Status
 
-HOME-228 through HOME-233 are done: S3 ingest, SQLite storage, the search
-API, this UI, and auth. Packaging/deploy (HOME-234) is next. Today the app
-serves (every route below except `/healthz` requires auth — see "Auth"):
+HOME-228 through HOME-234 are done: S3 ingest, SQLite storage, the search
+API, the UI, auth, and this repo's half of packaging (multi-arch image,
+non-root, read-only-root-filesystem-ready). Today the app serves (every
+route below except `/healthz` requires auth — see "Auth"):
 
 ```
 GET  /healthz              -> {"status": "ok"}  (no auth)

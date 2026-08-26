@@ -58,6 +58,41 @@ COPY --from=tailwind /build/kabom/static/css/style.css ./kabom/static/css/style.
 
 RUN uv sync --no-dev
 
+# --- HOME-234: non-root, read-only-root-filesystem friendly --------------
+#
+# The app only ever writes one thing to disk: the SQLite database file (see
+# kabom/config.py's load_db_path and kabom/db.py — everything else it reads
+# is either baked into the image or fetched from S3/MinIO). That means the
+# runtime container needs exactly one writable path, not a writable root
+# filesystem.
+#
+# `/data` is that path. It defaults KABOM_DB_PATH here rather than leaving
+# it at kabom.sqlite3-relative-to-/app, so a container run with
+# --read-only (or a k8s Pod with securityContext.readOnlyRootFilesystem:
+# true) still has somewhere sane to put the database without the deployer
+# having to know the app's internals — they only need to mount a writable
+# volume at /data (e.g. `-v $(pwd)/data:/data` or a PVC in k8s; see
+# README.md). /app itself, and everything else in the image, stays
+# read-only at runtime.
+#
+# A fixed, non-root UID/GID (not "the next free one") so a k8s
+# securityContext.runAsUser can pin the same identity outside the image if
+# it ever needs to (e.g. matching a PVC's fsGroup).
+RUN groupadd --gid 1000 kabom \
+    && useradd --uid 1000 --gid kabom --home-dir /app --shell /usr/sbin/nologin kabom \
+    && mkdir -p /data \
+    && chown -R kabom:kabom /app /data
+
+ENV KABOM_DB_PATH=/data/kabom.sqlite3
+
+USER kabom
+
 EXPOSE 8000
 
-CMD ["uv", "run", "--no-sync", "uvicorn", "kabom.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Not `uv run` here: `uv run`, even with --no-sync, still tries to write to
+# its cache/state dir (UV_CACHE_DIR, defaulting under $HOME) on every
+# invocation, which fails under a read-only root filesystem (see the
+# read-only-root check in README.md). Dependencies are already synced into
+# /app/.venv by the `uv sync` above, so invoking that venv's uvicorn
+# directly needs no writes anywhere but /data.
+CMD ["/app/.venv/bin/uvicorn", "kabom.main:app", "--host", "0.0.0.0", "--port", "8000"]
