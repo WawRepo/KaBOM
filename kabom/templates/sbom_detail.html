@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}KaBOM — {{ sbom.subject or "SBOM" }}{% endblock %}
+{% block content %}
+  <a href="/sboms" class="text-sm hover:underline">&larr; Inventory</a>
+
+  <h1 class="mt-2 text-xl font-semibold">{{ sbom.subject or "(unknown subject)" }}</h1>
+  <p class="text-sm text-slate-500">
+    {{ sbom.kind }} · {{ sbom.age_human }} old · {{ sbom.components|length }} components
+  </p>
+
+  <!--
+    Client-side filter, plain vanilla JS, no framework: it only hides/shows
+    rows that are already fully rendered server-side, so with JavaScript
+    unavailable the table just stays complete and readable — never a dead
+    control, never missing data.
+  -->
+  <label for="component-filter" class="sr-only">Filter components</label>
+  <input
+    type="text"
+    id="component-filter"
+    placeholder="Filter components…"
+    autocomplete="off"
+    oninput="kabomFilterComponents(this.value)"
+    class="mt-4 w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+           text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none
+           dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+  />
+
+  <div class="mt-4 overflow-x-auto">
+    <table class="w-full text-left text-sm" data-testid="component-table">
+      <thead>
+        <tr class="border-b border-slate-200 dark:border-slate-700">
+          <th class="py-2 pr-4">Name</th>
+          <th class="py-2 pr-4">Version</th>
+          <th class="py-2 pr-4">Type</th>
+          <th class="py-2 pr-4">PURL</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in sbom.components %}
+          <tr class="component-row border-b border-slate-100 dark:border-slate-800" data-name="{{ c.name|lower }}">
+            <td class="py-1 pr-4">{{ c.name }}</td>
+            <td class="py-1 pr-4 font-mono">{{ c.version or "—" }}</td>
+            <td class="py-1 pr-4">{{ c.type or "—" }}</td>
+            <td class="py-1 pr-4 font-mono text-xs">{{ c.purl or "—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    // Vanilla JS, no build step, no framework — filters rows already
+    // present in the DOM; see the docstring above for the no-JS fallback.
+    function kabomFilterComponents(value) {
+      var needle = value.trim().toLowerCase();
+      document.querySelectorAll(".component-row").forEach(function (row) {
+        var match = row.dataset.name.indexOf(needle) !== -1;
+        row.style.display = match ? "" : "none";
+      });
+    }
+  </script>
+{% endblock %}

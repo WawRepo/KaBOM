@@ -1,0 +1,41 @@
+<!--
+  Own file because it is swapped in whole by htmx (hx-select="#search-results"
+  + hx-swap="outerHTML" in index.html) as well as rendered as part of a full
+  page load — one template, one source of truth for both paths.
+
+  The red border below is the other half of CLAUDE.md's freshness
+  requirement: when the banner is RED, the warning must also sit right next
+  to the answer, not only at the top of the page.
+-->
+<div
+  id="search-results"
+  data-testid="search-results"
+  class="mt-6
+    {% if banner.level == 'red' %}rounded-lg border-2 border-red-600 p-3{% endif %}"
+>
+  {% if q %}
+    {% if groups %}
+      <ul class="divide-y divide-slate-200 dark:divide-slate-700">
+        {% for group in groups %}
+          <li class="py-3">
+            <div class="font-semibold">{{ group.name }}</div>
+            <ul class="mt-1 space-y-1 text-sm text-slate-700 dark:text-slate-300">
+              {% for row in group.rows %}
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4">
+                  <span>
+                    {{ row.subject }}
+                    <span class="text-xs uppercase text-slate-500">({{ row.kind }})</span>
+                  </span>
+                  <span class="font-mono">{{ row.version or "—" }}</span>
+                  <span class="text-slate-500">{{ row.age_human }} old</span>
+                </li>
+              {% endfor %}
+            </ul>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-slate-500">No matches for &ldquo;{{ q }}&rdquo;.</p>
+    {% endif %}
+  {% endif %}
+</div>

@@ -5,3 +5,13 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .DS_Store
+*.sqlite3
+
+# Downloaded by scripts/build-css.sh; not checked in, redownloaded on demand.
+.tailwindcss-cli/
+
+# Playwright/node tooling for tests/e2e — never part of the runtime image.
+# package-lock.json IS committed, for reproducible `npm install`.
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/playwright-report/

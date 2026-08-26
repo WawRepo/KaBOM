@@ -1,0 +1,12 @@
+{
+  "name": "kabom-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Playwright end-to-end tests for KaBOM's UI (HOME-232). Node tooling lives only here, for the test suite — never in the runtime image; see the repo README.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

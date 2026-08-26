@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}KaBOM — Inventory{% endblock %}
+{% block content %}
+  <h1 class="mb-4 text-xl font-semibold">Inventory</h1>
+  <p class="mb-4 text-sm text-slate-500">
+    Sorted oldest first — whatever is stuck is at the top, not buried
+    alphabetically.
+  </p>
+
+  {% if sboms %}
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="sbom-list">
+      {% for s in sboms %}
+        <a
+          href="/sboms/{{ s.id }}"
+          class="block rounded-lg border border-slate-200 p-4 hover:shadow-md
+                 dark:border-slate-700"
+        >
+          <div class="font-medium">{{ s.subject or "(unknown subject)" }}</div>
+          <div class="text-xs uppercase text-slate-500">{{ s.kind }}</div>
+          <div class="mt-2 text-sm">{{ s.component_count }} components</div>
+          <div class="text-sm text-slate-500">{{ s.age_human }} old</div>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-slate-500">No SBOMs ingested yet.</p>
+  {% endif %}
+{% endblock %}

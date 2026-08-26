@@ -1,0 +1,11 @@
+/*
+ * Tailwind v4 entry point. `@import "tailwindcss"` pulls in the default
+ * preflight + utilities; dark mode uses Tailwind v4's default `dark:`
+ * variant, which follows `prefers-color-scheme` automatically — no config,
+ * no toggle, no localStorage, per HOME-232 ("dark mode by default").
+ *
+ * Compiled to style.css by the standalone Tailwind CLI (no npm, no
+ * node_modules) — see scripts/build-css.sh and the README for how to
+ * regenerate it.
+ */
+@import "tailwindcss";

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}KaBOM{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <!--
+      Self-hosted, pinned htmx build (kabom/static/js/htmx.min.js) — no CDN,
+      no npm, no bundler; it is a single vendored script tag. `defer` means
+      it loads without blocking the page, and if the request for this script
+      is blocked entirely (see the Playwright js-blocked suite), every
+      hx-* attribute below is simply inert and the surrounding <form>
+      elements fall back to plain HTTP GET submits — see kabom/templates
+      /index.html.
+    -->
+    <script src="/static/js/htmx.min.js" defer></script>
+  </head>
+  <body class="min-h-screen bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
+    <!--
+      The freshness banner — CLAUDE.md's hard requirement. Always rendered,
+      on every page, never dismissible: no close button, no JS to hide it,
+      no scroll-away header. It is computed fresh on every request from
+      GET /api/status (see kabom/main.py's _freshness_banner), using the
+      OLDEST sbom's age, never the newest or an average.
+    -->
+    <div
+      data-testid="freshness-banner"
+      data-level="{{ banner.level }}"
+      role="status"
+      class="w-full px-4 py-2 text-sm font-medium text-center
+        {% if banner.level == 'green' %}bg-green-700 text-white
+        {% elif banner.level == 'amber' %}bg-amber-500 text-black
+        {% else %}bg-red-700 text-white{% endif %}"
+    >
+      <div class="mx-auto max-w-5xl">
+        <span>{{ banner.headline }}</span>
+        {% if banner.level == 'red' %}
+          <div class="font-semibold">These answers may be wrong. Check the SBOM job.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <nav class="border-b border-slate-200 dark:border-slate-700">
+      <div class="mx-auto flex max-w-5xl gap-4 px-4 py-3 text-sm">
+        <a href="/" class="font-semibold hover:underline">KaBOM</a>
+        <a href="/" class="hover:underline">Search</a>
+        <a href="/sboms" class="hover:underline">Inventory</a>
+      </div>
+    </nav>
+
+    <main class="mx-auto max-w-5xl px-4 py-6">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
