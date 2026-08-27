@@ -120,6 +120,16 @@ jobs:
             --set ingress.tls.enabled=true \
             --set ingress.tls.secretName=kabom-tls
 
+      # `helm lint` and `helm template` BOTH pass on a manifest whose
+      # apiVersion has been swallowed by a stray `-}}` chomp — the text
+      # renders, it just parses as a document with no apiVersion, and
+      # ArgoCD then refuses to sync ("groupVersion shouldn't be empty").
+      # That shipped as chart 0.1.3. Parsing the render is what catches it.
+      - name: Rendered manifests are valid Kubernetes objects
+        run: |
+          python3 -m pip install --quiet --user pyyaml
+          ./scripts/check-rendered-manifests.sh
+
       # `helm lint` passes on every one of these. Each renders a manifest
       # that installs cleanly and is wrong — a catch-all ingress, a fake TLS
       # certificate, a CrashLoopBackOff — so the chart turns them into

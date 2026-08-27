@@ -1,17 +1,25 @@
+{{/*
+  Validate up front, so a typo is a template error rather than a
+  CrashLoopBackOff discovered later. `helm lint` catches neither.
+
+  Note the delimiters: every action here opens with `{{` and closes with
+  `}}`, NOT `{{-` / `-}}`. A right-chomp on the final `end` swallows the
+  newline after it and glues `apiVersion:` onto the previous line, which
+  YAML then parses as part of that line — the document loses apiVersion
+  entirely and ArgoCD refuses to sync with "groupVersion shouldn't be
+  empty". `helm template` and `helm lint` both stay happy, so the CI step
+  that parses the rendered YAML is what actually guards this.
+*/}}
+{{ if not (has .Values.env.authMode (list "basic" "google")) }}
+  {{ fail (printf "env.authMode must be \"basic\" or \"google\", got %q. The app refuses to start on anything else, and there is no unauthenticated mode." .Values.env.authMode) }}
+{{ end }}
+{{ if lt (int .Values.env.refreshMinutes) 1 }}
+  {{ fail (printf "env.refreshMinutes must be at least 1, got %v. Zero is not \"disabled\" — it becomes a tight re-ingest loop pegging a CPU core." .Values.env.refreshMinutes) }}
+{{ end }}
 # One replica, always. KaBOM's data lives in a single SQLite file on a
 # ReadWriteOnce PVC (see pvc.yaml and values.yaml's persistence comment) —
 # a second replica could not attach the same volume, and there is exactly
 # one user to serve. Not a value: it never varies.
-{{- /*
-  Validate up front, so a typo is a template error rather than a
-  CrashLoopBackOff discovered later. `helm lint` catches neither.
-*/ -}}
-{{- if not (has .Values.env.authMode (list "basic" "google")) -}}
-  {{- fail (printf "env.authMode must be \"basic\" or \"google\", got %q. The app refuses to start on anything else, and there is no unauthenticated mode." .Values.env.authMode) -}}
-{{- end -}}
-{{- if lt (int .Values.env.refreshMinutes) 1 -}}
-  {{- fail (printf "env.refreshMinutes must be at least 1, got %v. Zero is not \"disabled\" — it becomes a tight re-ingest loop pegging a CPU core." .Values.env.refreshMinutes) -}}
-{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
