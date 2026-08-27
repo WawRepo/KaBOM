@@ -14,8 +14,8 @@ type: application
 # the Deployment falls back to `.Chart.AppVersion`, so appVersion IS the
 # image tag that gets deployed. If it names a tag that was never published,
 # the install fails with ImagePullBackOff.
-version: 0.1.4
-appVersion: "0.1.4"
+version: 0.1.5
+appVersion: "0.1.5"
 
 # No separate chart repository (ChartMuseum and friends). The chart is
 # published as an OCI artifact to the same GHCR registry that already holds
