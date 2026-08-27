@@ -10,6 +10,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$REPO_ROOT/charts/kabom"
 CHECKER="$REPO_ROOT/scripts/check_manifests.py"
 
+# Needs PyYAML. Prefer a python3 that already has it; otherwise fall back
+# to uv, which this repo depends on anyway and which fetches it on the fly.
+# The ARC runner image ships a python3 with no pip at all, so
+# `pip install pyyaml` is not an option there.
+if python3 -c "import yaml" 2>/dev/null; then
+  PY=(python3)
+elif command -v uv >/dev/null 2>&1; then
+  PY=(uv run --quiet --with pyyaml python3)
+else
+  echo "need either python3 with PyYAML, or uv" >&2
+  exit 1
+fi
+
 status=0
 
 check() {
@@ -18,7 +31,7 @@ check() {
   echo "  $desc"
   # No pipefail games: helm failing here would itself be the bug, and the
   # checker exits non-zero on anything unusable.
-  if helm template kabom "$CHART_DIR" "$@" | python3 "$CHECKER"; then
+  if helm template kabom "$CHART_DIR" "$@" | "${PY[@]}" "$CHECKER"; then
     return 0
   fi
   echo "::error::rendered manifests are unusable: $desc" >&2
