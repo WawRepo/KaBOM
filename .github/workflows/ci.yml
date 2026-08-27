@@ -106,6 +106,12 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
+      # The manifest check below parses the rendered YAML, which needs
+      # PyYAML. The runner image's python3 has no pip, so uv is how this
+      # repo gets Python dependencies anywhere — same as the test job.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
       - name: helm lint (default values)
         run: helm lint charts/kabom
 
