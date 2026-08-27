@@ -576,21 +576,37 @@ def _safe_next(raw: str | None) -> str:
     return raw
 
 
+def _login_options() -> dict:
+    """Which sign-in methods to offer, judged on what is actually
+    configured rather than on `KABOM_AUTH` alone.
+
+    The two are additive. A password is offered whenever KABOM_BASIC_USER
+    and KABOM_BASIC_PASSWORD_HASH are set — including under
+    `KABOM_AUTH=google`, where they otherwise only served scripts. Google
+    being unreachable, or its OAuth app misconfigured, must not be able to
+    lock a human out of the UI when a working password already exists.
+    """
+    return {
+        "show_password": auth.basic_auth_is_configured(),
+        "show_google": auth.load_auth_mode() == "google",
+    }
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str | None = None) -> HTMLResponse:
-    """The sign-in page, in both modes.
+    """The sign-in page. Shows whichever methods are configured — both at
+    once when both are.
 
-    Google mode shows a button rather than bouncing straight to the OAuth
-    flow. Auto-redirecting looks tidier and breaks sign-out: /logout clears
-    the session, lands here, gets sent to Google, and Google's own still-live
-    SSO session signs the user straight back in without a prompt — so the
-    button appears to do nothing at all.
+    Google is a button rather than an automatic redirect. Auto-redirecting
+    looks tidier and breaks sign-out: /logout clears the session, lands
+    here, gets sent to Google, and Google's own still-live SSO session
+    signs the user straight back in without a prompt — so the button
+    appears to do nothing at all.
     """
-    mode = auth.load_auth_mode()
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"next": _safe_next(next), "error": None, "mode": mode},
+        {"next": _safe_next(next), "error": None, **_login_options()},
     )
 
 
@@ -604,8 +620,14 @@ def login_submit(
     """Check the submitted credentials and, if they are right, start a
     session. A wrong password re-renders the form with one deliberately
     vague message — which of the two was wrong is not the visitor's
-    business."""
-    if auth.load_auth_mode() != "basic":
+    business.
+
+    Accepted in google mode too, when a password is configured: the form is
+    offered there, so it has to work there.
+    """
+    options = _login_options()
+    if not options["show_password"]:
+        # No password configured at all — there is no form to submit to.
         raise HTTPException(status_code=404, detail="Not found")
 
     target = _safe_next(next)
@@ -613,7 +635,7 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"next": target, "error": "Incorrect username or password.", "mode": "basic"},
+            {"next": target, "error": "Incorrect username or password.", **options},
             status_code=401,
         )
 

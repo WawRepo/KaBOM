@@ -226,32 +226,6 @@ def _service_account_ok(credentials: HTTPBasicCredentials | None) -> bool:
     return check_basic_credentials(credentials.username, credentials.password)
 
 
-def _check_basic_auth(request: Request, credentials: HTTPBasicCredentials | None) -> None:
-    """Authenticate a request in `basic` mode, by either route.
-
-    A browser signs in once at /login and gets a signed session cookie; an
-    API client sends `Authorization: Basic` on every request and never
-    touches the session. Both end up here, and either is sufficient.
-    """
-    # Revalidated against the CURRENT configured username, not just checked
-    # for truthiness: rotate KABOM_BASIC_USER (or the hash, which is only
-    # ever changed alongside it) and existing cookies stop working on the
-    # next request instead of outliving the rotation by the session
-    # cookie's lifetime. Google mode re-checks its allow-list the same way.
-    session_user = request.session.get("user")
-    if session_user and secrets.compare_digest(
-        str(session_user).encode("utf-8"), load_basic_auth_config().username.encode("utf-8")
-    ):
-        return
-    if credentials is not None and check_basic_credentials(
-        credentials.username, credentials.password
-    ):
-        return
-    if _wants_html(request):
-        raise _redirect_to_login(request)
-    raise _unauthorized("Incorrect username or password")
-
-
 # --- google oauth --------------------------------------------------------
 
 
@@ -382,31 +356,29 @@ def get_google_oauth_client() -> StarletteOAuth2App:
     return _oauth.create_client(_GOOGLE_CLIENT_NAME)
 
 
-def _check_google_session(
-    request: Request, credentials: HTTPBasicCredentials | None = None
-) -> None:
-    """Check the signed session cookie against the current allow-list.
-
-    Re-checked on every request, not just at login — if `KABOM_ALLOWED_EMAILS`
-    is edited to drop someone, they lose access on their very next request
-    rather than staying in until their cookie expires.
-    """
-    # A machine sending Basic credentials is let through first, before the
-    # session is looked at: it has no session, and no way to get one.
-    if _service_account_ok(credentials):
-        return
-
-    config = load_google_auth_config()
-    email = request.session.get("email")
-    if not email or email not in config.allowed_emails:
-        if _wants_html(request):
-            raise _redirect_to_login(request)
-        raise _unauthorized("Not authenticated")
-
-
 # --- the one dependency every protected route uses --------------------------
 
 _basic_credentials = HTTPBasic(auto_error=False)
+
+
+def _session_user_ok(request: Request) -> bool:
+    """A password session, revalidated against the CURRENT configured
+    username rather than merely checked for existence — rotate the
+    credentials and existing cookies stop working on the next request."""
+    session_user = request.session.get("user")
+    if not session_user or not basic_auth_is_configured():
+        return False
+    return secrets.compare_digest(
+        str(session_user).encode("utf-8"), load_basic_auth_config().username.encode("utf-8")
+    )
+
+
+def _session_email_ok(request: Request) -> bool:
+    """A Google session, re-checked against the allow-list on every request
+    rather than only at login — drop someone from KABOM_ALLOWED_EMAILS and
+    they lose access immediately, not whenever their cookie expires."""
+    email = request.session.get("email")
+    return bool(email) and email in load_google_auth_config().allowed_emails
 
 
 async def require_auth(
@@ -417,9 +389,35 @@ async def require_auth(
     kabom/main.py's `protected` router), rather than repeated in every
     handler. `GET /healthz` is the one route registered outside that
     router, so it alone never runs this.
+
+    The three ways in are ADDITIVE, not alternatives chosen by
+    `KABOM_AUTH`. That setting decides what the login page *offers*; it
+    does not decide what a already-issued credential is worth:
+
+    - a password session cookie, from the login form
+    - a Google session cookie, from the OAuth callback
+    - `Authorization: Basic`, for scripts that cannot do an OAuth flow
+
+    Each is checked against its own current configuration, so none of them
+    outlives the credentials behind it. Losing the Google side must not
+    lock a human out of the UI when a password is also configured — which
+    is exactly the situation a redirect_uri mismatch creates.
     """
+    # Validated first, before anything reads request.session. An unset or
+    # bogus KABOM_AUTH has to surface as this explicit error rather than as
+    # "SessionMiddleware must be installed" — which is what touching the
+    # session first produces, since the middleware is only attached when
+    # the mode is valid (see kabom/main.py).
     mode = load_auth_mode()
-    if mode == "basic":
-        _check_basic_auth(request, credentials)
-    else:
-        _check_google_session(request, credentials)
+
+    # Each is independently sufficient.
+    if _session_user_ok(request):
+        return
+    if mode == "google" and _session_email_ok(request):
+        return
+    if _service_account_ok(credentials):
+        return
+
+    if _wants_html(request):
+        raise _redirect_to_login(request)
+    raise _unauthorized("Incorrect username or password")

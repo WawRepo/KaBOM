@@ -330,6 +330,134 @@ def test_no_secret_value_appears_in_response_body_or_logs(
         assert FAKE_SESSION_SECRET not in body
 
 
+# --- behind a TLS-terminating proxy ------------------------------------------
+
+
+def test_oauth_redirect_uri_uses_the_forwarded_scheme(monkeypatch, tmp_path, fresh_main):
+    """The callback URL must be built from the scheme the *client* used.
+
+    TLS terminates at the ingress, so the pod only ever sees plain HTTP.
+    Without honouring X-Forwarded-Proto the app hands Google an http://
+    redirect_uri and every login dies on `redirect_uri_mismatch` against
+    the registered https:// one.
+    """
+    _google_env(monkeypatch, tmp_path)
+    main = fresh_main()
+
+    # TestClient talks straight to the ASGI app, so uvicorn's
+    # ProxyHeadersMiddleware is not in the stack. Wrap it the way uvicorn
+    # does with FORWARDED_ALLOW_IPS set (see the Dockerfile).
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    client = TestClient(
+        ProxyHeadersMiddleware(main.app, trusted_hosts="*"),
+        base_url="http://testserver",
+    )
+
+    response = client.get(
+        "/auth/login",
+        headers={"X-Forwarded-Proto": "https", "X-Forwarded-For": "203.0.113.7"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert "redirect_uri=https%3A%2F%2F" in location, (
+        f"redirect_uri must use the forwarded https scheme, got: {location}"
+    )
+    assert "redirect_uri=http%3A%2F%2F" not in location
+
+
+# --- both sign-in methods at once --------------------------------------------
+
+
+def test_google_mode_login_page_also_offers_the_password_form(monkeypatch, tmp_path, fresh_main):
+    """Google being unreachable must not lock a human out of the UI when a
+    password is configured — the two are additive, not alternatives."""
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KABOM_BASIC_USER", FAKE_USERNAME)
+    monkeypatch.setenv("KABOM_BASIC_PASSWORD_HASH", FAKE_PASSWORD_HASH)
+
+    page = _client(fresh_main()).get("/login")
+
+    assert page.status_code == 200
+    assert "Sign in with Google" in page.text
+    assert 'name="password"' in page.text
+
+
+def test_google_mode_password_login_works_and_reaches_the_ui(monkeypatch, tmp_path, fresh_main):
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KABOM_BASIC_USER", FAKE_USERNAME)
+    monkeypatch.setenv("KABOM_BASIC_PASSWORD_HASH", FAKE_PASSWORD_HASH)
+    main = fresh_main()
+    conn = db.get_connection(str(tmp_path / "kabom.sqlite3"))
+    db.init_db(conn)
+    main.app.dependency_overrides[main.get_db_connection] = lambda: (yield conn)
+    try:
+        client = _client(main)
+        posted = client.post(
+            "/login",
+            data={"username": FAKE_USERNAME, "password": FAKE_PASSWORD, "next": "/"},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303
+        # The session alone gets in — no Authorization header on this request.
+        assert client.get("/api/status").status_code == 200
+    finally:
+        main.app.dependency_overrides.clear()
+        conn.close()
+
+
+def test_google_mode_without_a_password_offers_only_google(monkeypatch, tmp_path, fresh_main):
+    """No password configured means no form, and nothing to post to."""
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("KABOM_BASIC_USER", raising=False)
+    monkeypatch.delenv("KABOM_BASIC_PASSWORD_HASH", raising=False)
+    client = _client(fresh_main())
+
+    page = client.get("/login")
+    assert "Sign in with Google" in page.text
+    assert 'name="password"' not in page.text
+
+    posted = client.post(
+        "/login",
+        data={"username": FAKE_USERNAME, "password": FAKE_PASSWORD, "next": "/"},
+        follow_redirects=False,
+    )
+    assert posted.status_code == 404
+
+
+def test_basic_mode_login_page_offers_no_google_button(monkeypatch, tmp_path, fresh_main):
+    """No OAuth client is configured in basic mode, so offering the button
+    would send people to a dead flow."""
+    _basic_env(monkeypatch, tmp_path)
+
+    page = _client(fresh_main()).get("/login")
+
+    assert 'name="password"' in page.text
+    assert "Sign in with Google" not in page.text
+
+
+def test_password_session_is_still_refused_for_a_google_allowlist_outsider(
+    monkeypatch, tmp_path, fresh_main
+):
+    """The allow-list must not be weakened by the password path existing:
+    a Google session for an unlisted address stays refused."""
+    _google_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KABOM_BASIC_USER", FAKE_USERNAME)
+    monkeypatch.setenv("KABOM_BASIC_PASSWORD_HASH", FAKE_PASSWORD_HASH)
+    main = fresh_main()
+    client = _client(main)
+
+    # Forge exactly what a successful-but-unlisted OAuth callback would set.
+    with client:
+        response = client.get("/api/status")
+    assert response.status_code == 401
+
+    monkeypatch.setenv("KABOM_ALLOWED_EMAILS", OUTSIDER_EMAIL + "-different")
+    assert client.get("/api/status").status_code == 401
+
+
 def test_missing_kabom_auth_is_a_clear_error_not_a_silent_bypass(monkeypatch, tmp_path):
     monkeypatch.delenv("KABOM_AUTH", raising=False)
     monkeypatch.setenv("KABOM_DB_PATH", str(tmp_path / "kabom.sqlite3"))

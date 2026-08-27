@@ -115,6 +115,7 @@ Kaniko was chosen to avoid.
 | `KABOM_BASIC_USER` `KABOM_BASIC_PASSWORD_HASH` | A bcrypt hash, never a plaintext password. Required in basic mode; **optional in google mode**, where it becomes a service account (see below). |
 | `KABOM_GOOGLE_CLIENT_ID` `KABOM_GOOGLE_CLIENT_SECRET` `KABOM_ALLOWED_EMAILS` | Google mode. `ALLOWED_EMAILS` is an explicit allow-list, never a domain match. |
 | `KABOM_INSECURE_COOKIES` | Set to `1` to drop the `Secure` flag on the session cookie. **Local http development only** — without it a browser will not send the cookie back over plain HTTP and login silently loops. |
+| `FORWARDED_ALLOW_IPS` | Which peers' `X-Forwarded-*` headers to trust. Defaults to `*` in the image, because behind a TLS-terminating proxy the pod only ever sees plain HTTP and would otherwise build `http://` URLs — which Google rejects as a `redirect_uri_mismatch`. Set it to the proxy's address if the container is reachable directly. |
 
 ### Signing in
 
@@ -126,13 +127,21 @@ API clients skip all of that and send `Authorization: Basic` on every
 request, which is what `curl -u user:pass https://kabom.example.com/api/status`
 already does. `/healthz` is the only route that needs nothing at all.
 
-**This works in google mode too.** A cron job or a monitoring check cannot
-complete an interactive OAuth flow, so google mode would otherwise lock every
-machine out of the API. Set `KABOM_BASIC_USER` and `KABOM_BASIC_PASSWORD_HASH`
-alongside the Google variables and that pair becomes a service account:
-people sign in with Google, scripts keep using `-u`. Leave them unset and
-Google is the only way in. It does not weaken the allow-list — that still
-governs every browser session.
+**The two methods are additive, not alternatives.** `KABOM_AUTH` decides what
+the login page *offers*; it does not decide what an already-issued credential
+is worth. Set `KABOM_BASIC_USER` and `KABOM_BASIC_PASSWORD_HASH` alongside the
+Google variables and you get all three ways in at once:
+
+- the **Google button** on `/login`, gated by `KABOM_ALLOWED_EMAILS`
+- a **password form** on the same page, for a human
+- `Authorization: Basic` for scripts that cannot do an OAuth flow
+
+That matters because Google being unreachable, or its OAuth app
+misconfigured, must not lock a person out of the UI when a working password
+already exists. Leave the password variables unset and Google is the only way
+in. Either way the allow-list is unchanged and still re-checked on every
+request — an OAuth app that accepts any Google account looks identical to a
+working one.
 
 To try Google sign-in against the local stack:
 

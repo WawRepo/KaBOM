@@ -89,6 +89,23 @@ RUN groupadd --gid 1000 kabom \
 
 ENV KABOM_DB_PATH=/data/kabom.sqlite3
 
+# Trust X-Forwarded-* from the proxy in front of the app.
+#
+# uvicorn already honours proxy headers by default, but only from
+# forwarded_allow_ips, which defaults to 127.0.0.1 — so behind an ingress
+# that terminates TLS, the pod sees plain HTTP and every URL the app
+# builds comes out as http://. That breaks the OAuth redirect_uri (Google
+# rejects it as a mismatch against the registered https:// one) and any
+# other absolute URL the app generates.
+#
+# "*" trusts those headers from any peer. That is right when the only
+# route to the container is through a proxy — the chart publishes a
+# ClusterIP Service, so nothing else can reach it — and wrong if the
+# container is directly reachable, where a client could then spoof its own
+# scheme. Override FORWARDED_ALLOW_IPS with the proxy's address to
+# tighten it.
+ENV FORWARDED_ALLOW_IPS=*
+
 USER kabom
 
 EXPOSE 8000
