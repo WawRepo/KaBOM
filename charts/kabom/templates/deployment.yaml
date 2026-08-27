@@ -5,10 +5,10 @@
   Note the delimiters: every action here opens with `{{` and closes with
   `}}`, NOT `{{-` / `-}}`. A right-chomp on the final `end` swallows the
   newline after it and glues `apiVersion:` onto the previous line, which
-  YAML then parses as part of that line — the document loses apiVersion
-  entirely and ArgoCD refuses to sync with "groupVersion shouldn't be
-  empty". `helm template` and `helm lint` both stay happy, so the CI step
-  that parses the rendered YAML is what actually guards this.
+  YAML then parses as part of that line — so the document has no
+  apiVersion and is not a valid Kubernetes object. `helm template` and
+  `helm lint` both stay happy, because Helm only produced text; the CI
+  step that parses the rendered YAML is what actually guards this.
 */}}
 {{ if not (has .Values.env.authMode (list "basic" "google")) }}
   {{ fail (printf "env.authMode must be \"basic\" or \"google\", got %q. The app refuses to start on anything else, and there is no unauthenticated mode." .Values.env.authMode) }}

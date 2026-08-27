@@ -5,14 +5,12 @@
 has been swallowed by a stray `-}}` chomp: the chomp eats the newline after
 a template action and glues `apiVersion:` onto the end of the previous
 line, so YAML parses it as part of that line and the document simply has no
-apiVersion. Helm never notices, because it only ever produced text. The
-failure lands on whoever installs the chart:
+apiVersion. Helm never notices, because it only ever produced text.
 
-    ComparisonError: failed to discover server resources for group
-    version : groupVersion shouldn't be empty
-
-That shipped as chart 0.1.3 and could not be installed by ArgoCD at all.
-Parsing the render is the only thing that catches it.
+A document with no apiVersion is not a valid Kubernetes object, so it
+fails at whatever applies it — `kubectl apply`, `helm install`, or any
+GitOps controller. That shipped as chart 0.1.3. Parsing the render is the
+only thing that catches it here.
 
 Usage: helm template ... | python3 scripts/check_manifests.py
 """
