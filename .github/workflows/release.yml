@@ -106,7 +106,7 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create the tag and the release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           TAG: ${{ steps.next.outputs.tag }}
           SHA: ${{ steps.stamp.outputs.sha }}
@@ -221,7 +221,7 @@ jobs:
           helm push "dist/kabom-${VERSION}.tgz" "oci://$REGISTRY/${owner}/charts"
 
       - name: Attach the chart to the release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           TAG: ${{ needs.tag.outputs.tag }}
           VERSION: ${{ needs.tag.outputs.version }}
