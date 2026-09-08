@@ -10,12 +10,14 @@ name: Release
 # --no-push on every push, so a broken Dockerfile is caught long before
 # anyone reaches for this.
 #
-# ⚠️  ARCHITECTURE: Kaniko builds for the architecture it runs on and
-#     cannot cross-build, so this publishes an **arm64-only** image. It
-#     will not start on an amd64 node — a single-arch image fails at
-#     runtime, not at deploy. Fine while KaBOM's SQLite PVC pins it to one
-#     arm64 node; it stops being fine the moment it needs to land anywhere
-#     else.
+# Every job runs on GitHub-hosted runners. This repo is PUBLIC, and a
+# self-hosted runner on a public repo runs a fork's workflow on our own
+# hardware — see the note at the top of ci.yml. Never point a job here at
+# the cluster's ARC runners.
+#
+# The image is multi-arch (linux/amd64 + linux/arm64), built with buildx
+# and QEMU. The cluster is 11 arm64 Pis and one amd64 box, and a
+# single-arch image fails at runtime, not at deploy.
 
 on:
   workflow_dispatch:
@@ -34,9 +36,7 @@ env:
 
 jobs:
   tag:
-    # A normal runner, not the Kaniko container: this job needs Node for
-    # the JavaScript actions below, and the Kaniko image has none.
-    runs-on: arc-k8s-kabom
+    runs-on: ubuntu-latest
     permissions:
       # write: creates the release AND pushes the Chart.yaml stamp commit.
       contents: write
@@ -125,61 +125,60 @@ jobs:
             core.info(`Released ${data.tag_name}: ${data.html_url}`);
 
   image:
-    # Kaniko: no Docker daemon and no privileged container, which is what
-    # makes this work on an ARC runner in kubernetes mode.
     needs: tag
-    runs-on: arc-k8s-kabom
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    container:
-      # The -debug tag is the one with a shell, which the Actions runner
-      # needs to execute `run:` steps at all.
-      image: gcr.io/kaniko-project/executor:v1.23.2-debug
     steps:
-      # Deliberately no actions/checkout: the Kaniko image has no Node, so
-      # JavaScript actions cannot run in it. Kaniko fetches the repo itself
-      # from the git context below, pinned to the tag just created.
-      #
-      # TARGETARCH is passed explicitly because it is one of BuildKit's
-      # automatic platform build args and Kaniko does not provide them —
-      # the Dockerfile's `case "$TARGETARCH"` picks the Tailwind binary and
-      # fails under `set -u` when it is empty.
-      - name: Build and push to GHCR
+      - uses: actions/checkout@v4
+        with:
+          # The tag just created, not main: the image must be built from
+          # exactly the commit the release points at.
+          ref: ${{ needs.tag.outputs.tag }}
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the image tags
+        id: tags
         env:
-          # Kaniko maps GIT_TOKEN to the *username* with an empty password,
-          # which GitHub rejects. x-access-token + the token as password is
-          # the form that works.
-          GIT_USERNAME: x-access-token
-          GIT_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.tag.outputs.tag }}
           VERSION: ${{ needs.tag.outputs.version }}
         run: |
           set -eu
           minor="${VERSION%.*}"
+          {
+            echo "tags<<END"
+            echo "$REGISTRY/$IMAGE_NAME:$VERSION"
+            echo "$REGISTRY/$IMAGE_NAME:$minor"
+            echo "$REGISTRY/$IMAGE_NAME:latest"
+            echo "END"
+          } >> "$GITHUB_OUTPUT"
 
-          # Kaniko reads registry credentials from a docker config file
-          # rather than a `docker login`, there being no daemon to log in to.
-          mkdir -p /kaniko/.docker
-          auth=$(printf '%s:%s' "${{ github.actor }}" "$GHCR_TOKEN" | base64 | tr -d '\n')
-          printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" "$auth" > /kaniko/.docker/config.json
-
-          /kaniko/executor \
-            --context "git://github.com/${{ github.repository }}.git#refs/tags/${TAG}" \
-            --dockerfile Dockerfile \
-            --build-arg TARGETARCH=arm64 \
-            --destination "$REGISTRY/$IMAGE_NAME:$VERSION" \
-            --destination "$REGISTRY/$IMAGE_NAME:$minor" \
-            --destination "$REGISTRY/$IMAGE_NAME:latest" \
-            --verbosity info
+      # TARGETARCH is set by BuildKit per platform, which is what lets the
+      # Dockerfile pick the right Tailwind binary for each half of the build.
+      - name: Build and push to GHCR (linux/amd64 + linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   chart:
     # The chart ships with the image, at the same version, to the same
     # registry. Helm speaks OCI natively, so GHCR needs nothing added —
     # no ChartMuseum, no gh-pages index, no second credential.
     needs: [tag, image]
-    runs-on: arc-k8s-kabom
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write

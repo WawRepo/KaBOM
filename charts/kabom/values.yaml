@@ -16,11 +16,10 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
-# The published image is arm64-only — kaniko builds for the architecture it
-# runs on and cannot cross-build, so there is no manifest list. Pinning the
-# arch stops the scheduler placing the pod on an amd64 node, where it fails
-# with `exec format error` AND strands the volume there. Set to {} if you
-# ever publish a multi-arch image.
+# The published image is multi-arch (amd64 + arm64), so the pod would start
+# on any node. Pinned to arm64 anyway: node-local storage binds the SQLite
+# volume to the first node the pod lands on, and the Pis are where it
+# should live. Set to {} to let the scheduler choose.
 nodeSelector:
   kubernetes.io/arch: arm64
 

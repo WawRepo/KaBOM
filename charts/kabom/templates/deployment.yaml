@@ -46,13 +46,12 @@ spec:
       labels:
         app.kubernetes.io/name: kabom
     spec:
-      # The image is arm64-only: kaniko builds for the architecture it runs
-      # on and cannot cross-build, so there is no manifest list (see
-      # .github/workflows/release.yml). Without this the scheduler is free
-      # to place the pod on an amd64 node, where it fails with `exec format
-      # error` — and because node-local storage binds on first consumer,
-      # the PVC is now stuck on the wrong node too, so deleting the pod
-      # does not fix it. Override to {} if you ever publish a manifest list.
+      # The image is multi-arch (amd64 + arm64) since the move to
+      # GitHub-hosted runners, so this is no longer needed for the pod to
+      # start. It stays because node-local storage binds the PVC to the
+      # first node the pod lands on: keeping the default arch pinned keeps
+      # the pod, and therefore the database, on the Pis. Override to {} if
+      # that stops mattering.
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       # Pod-level, and it has to be: fsGroup cannot go in the container

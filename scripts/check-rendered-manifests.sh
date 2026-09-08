@@ -12,8 +12,8 @@ CHECKER="$REPO_ROOT/scripts/check_manifests.py"
 
 # Needs PyYAML. Prefer a python3 that already has it; otherwise fall back
 # to uv, which this repo depends on anyway and which fetches it on the fly.
-# The ARC runner image ships a python3 with no pip at all, so
-# `pip install pyyaml` is not an option there.
+# Some runner images ship a python3 with no pip at all, so
+# `pip install pyyaml` is not something to rely on.
 if python3 -c "import yaml" 2>/dev/null; then
   PY=(python3)
 elif command -v uv >/dev/null 2>&1; then

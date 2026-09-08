@@ -92,16 +92,13 @@ Playwright against the real compose stack, cycling all three seed scenarios:
 keyboard search, all three screens, all three banner colours, the red border,
 and JS-blocked degradation, on desktop and mobile viewports. Runs in CI too.
 
-CI splits across two kinds of runner. `test`, `image` and `helm` run on a
-self-hosted Actions Runner Controller runner in the cluster, where the image
-is built by [Kaniko](https://github.com/GoogleContainerTools/kaniko) — no
-Docker daemon and no privileged container, which is what makes it work in
-ARC's kubernetes mode. Kaniko cannot cross-build, so that image is arm64.
+Every CI job runs on GitHub-hosted runners. This repo is public, and a
+self-hosted runner on a public repo would execute a fork's pull-request
+workflow on the homelab's own hardware — so nothing here is allowed to use
+the cluster's ARC runners. Hosted minutes are free for public repos.
 
-`e2e` stays on a GitHub-hosted runner: it runs `docker compose up` and needs
-a real container runtime, and the only way to get one on a kubernetes-mode
-ARC runner is a docker-in-docker sidecar with `--privileged` — the thing
-Kaniko was chosen to avoid.
+The image is built for both `linux/amd64` and `linux/arm64` with buildx and
+QEMU, on every push (build only) and on release (pushed to GHCR).
 
 ## Configuration
 

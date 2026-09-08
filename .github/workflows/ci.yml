@@ -5,11 +5,16 @@ on:
     branches: ["**"]
   pull_request:
 
+# Every job runs on GitHub-hosted runners, and that is a security decision,
+# not a cost one. This repo is PUBLIC: a self-hosted runner on a public repo
+# executes whatever a fork's pull request puts in a workflow, on our own
+# hardware, inside the homelab cluster. GitHub's own docs say not to do it.
+# Hosted minutes are free and unlimited for public repos, so there is no
+# trade-off left to make. Do not point any job at the cluster's ARC runners.
+
 jobs:
   test:
-    # Self-hosted ARC runner in the cluster. Pure Python — no container
-    # runtime involved, so kubernetes mode needs nothing special here.
-    runs-on: arc-k8s-kabom
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -34,58 +39,34 @@ jobs:
         run: uv run pytest
 
   image:
-    # Builds the image with Kaniko — no Docker daemon, no privileged
-    # container, which is what makes this work on an ARC runner in
-    # kubernetes mode. Build only: `--no-push` proves the Dockerfile is
-    # sound on every push without publishing anything. Releases are
-    # published separately (see release.yml).
+    # Build only: `push: false` proves the Dockerfile is sound, for BOTH
+    # architectures, on every push without publishing anything. Releases
+    # are published separately (see release.yml).
     #
-    # Kaniko builds for whatever architecture it runs on and cannot
-    # cross-build, so this is an arm64 image built natively on the cluster.
-    runs-on: arc-k8s-kabom
+    # Multi-arch via buildx + QEMU. The cluster is 11 arm64 Pis and one
+    # amd64 box, and a single-arch image fails at runtime, not at deploy —
+    # so the image is built for both here, exactly as release.yml builds it.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    container:
-      # The -debug tag is the one with a shell, which the Actions runner
-      # needs to execute `run:` steps at all.
-      image: gcr.io/kaniko-project/executor:v1.23.2-debug
     steps:
-      # Deliberately no actions/checkout: the Kaniko image has no Node, so
-      # JavaScript actions cannot run in it. Kaniko fetches the repo itself
-      # from the git context below instead, which needs no checkout step.
-      # TARGETARCH is passed explicitly: it is one of BuildKit's automatic
-      # platform build args, and kaniko does not provide them — the
-      # Dockerfile's `case "$TARGETARCH"` picks the Tailwind binary and
-      # fails under `set -u` when it is empty. Hardcoded to arm64 because
-      # that is what this runner is and what kaniko can therefore build.
-      - name: Build image (no push)
-        env:
-          # This repo is private, so the git context needs credentials.
-          # NOT GIT_TOKEN: kaniko maps that to the *username* with an empty
-          # password, which GitHub rejects ("authentication required").
-          # GitHub's documented form is the literal username
-          # "x-access-token" with the token as the password.
-          GIT_USERNAME: x-access-token
-          GIT_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          /kaniko/executor \
-            --context "git://github.com/${{ github.repository }}.git#${{ github.ref }}" \
-            --dockerfile Dockerfile \
-            --build-arg TARGETARCH=arm64 \
-            --no-push \
-            --verbosity info
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (both architectures, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   e2e:
-    # The one job that genuinely needs a container runtime: it runs
-    # `docker compose up` (MinIO + KaBOM) and drives a real browser at it.
-    # Kaniko cannot help here — it builds images, it does not run them.
-    #
-    # Stays on a GitHub-hosted runner, decided rather than defaulted. The
-    # only way to run it on the kubernetes-mode ARC runner is a
-    # docker-in-docker service container, and that needs --privileged —
-    # the exact thing Kaniko was chosen to avoid. Renting a hosted runner
-    # for one job is the cheaper trade than a privileged pod in the
-    # cluster.
+    # Runs `docker compose up` (MinIO + KaBOM) and drives a real browser at
+    # it. Needs a real container runtime, which the hosted runner has.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +80,7 @@ jobs:
     # Renders the chart with no live cluster involved — helm lint and helm
     # template are both purely local/offline. This never installs anything
     # anywhere; deploying the chart is the operator's job, not this repo's CI.
-    runs-on: arc-k8s-kabom
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -107,8 +88,8 @@ jobs:
         uses: azure/setup-helm@v4
 
       # The manifest check below parses the rendered YAML, which needs
-      # PyYAML. The runner image's python3 has no pip, so uv is how this
-      # repo gets Python dependencies anywhere — same as the test job.
+      # PyYAML. uv is how this repo gets Python dependencies anywhere —
+      # same as the test job.
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
