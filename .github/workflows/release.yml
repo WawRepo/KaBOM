@@ -1,0 +1,237 @@
+name: Release
+
+# Cut a release by hand: Actions -> Release -> Run workflow. There is no
+# tag to create and no version to think of — the last tag is read, the
+# chosen part is bumped (patch unless you say otherwise), the release is
+# created with generated notes, and the image is published to GHCR.
+#
+# Deliberately manual. Publishing an image is a decision, not something a
+# push to main should do on its own. ci.yml's `image` job builds with
+# --no-push on every push, so a broken Dockerfile is caught long before
+# anyone reaches for this.
+#
+# The image is multi-arch (linux/amd64 + linux/arm64), built with buildx
+# and QEMU. A single-arch image fails at runtime, not at deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which part of the version to increase"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+env:
+  REGISTRY: ghcr.io
+  # Matches the actual GitHub org/repo casing (WawRepo/KaBOM), lowercased
+  # because image repository names on GHCR must be lowercase.
+  IMAGE_NAME: wawrepo/kabom
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      # write: creates the release AND pushes the Chart.yaml stamp commit.
+      contents: write
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are what the version is derived from, and a shallow clone
+          # has none of them.
+          fetch-depth: 0
+
+      - name: Work out the next version
+        id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -eu
+          latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+
+          if [ -z "$latest" ]; then
+            # First release. Starts at v0.0.1: the version line begins here,
+            # with the first published image and chart.
+            next="v0.0.1"
+          else
+            v="${latest#v}"
+            major="${v%%.*}"
+            rest="${v#*.}"
+            minor="${rest%%.*}"
+            patch="${rest#*.}"
+            case "$BUMP" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "::error::Unknown bump '$BUMP'"; exit 1 ;;
+            esac
+            next="v${major}.${minor}.${patch}"
+          fi
+
+          echo "Last tag: ${latest:-none}. Releasing: $next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "version=${next#v}" >> "$GITHUB_OUTPUT"
+
+      # Stamped into the repo BEFORE the tag is cut, so the tag contains a
+      # chart that names the image this same release publishes. values.yaml
+      # leaves image.tag empty and the Deployment falls back to
+      # .Chart.AppVersion — a chart tagged with a version whose image was
+      # never pushed installs straight into ImagePullBackOff.
+      - name: Stamp the version into Chart.yaml and commit it
+        id: stamp
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -eu
+          sed -i -E "s/^version: .*/version: ${VERSION}/" charts/kabom/Chart.yaml
+          sed -i -E "s/^appVersion: .*/appVersion: \"${VERSION}\"/" charts/kabom/Chart.yaml
+          grep -E '^(version|appVersion):' charts/kabom/Chart.yaml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add charts/kabom/Chart.yaml
+          # [skip ci] — this commit changes only a version string that CI
+          # has already tested; re-running the whole suite on it is noise.
+          git commit -m "chore(release): chart ${VERSION} [skip ci]"
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag and the release
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+          SHA: ${{ steps.stamp.outputs.sha }}
+        with:
+          script: |
+            // Tags the stamped commit, not the one the workflow started
+            // from, so the tag's chart and its image agree.
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.TAG,
+              target_commitish: process.env.SHA,
+              name: process.env.TAG,
+              generate_release_notes: true,
+            });
+            core.info(`Released ${data.tag_name}: ${data.html_url}`);
+
+  image:
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag just created, not main: the image must be built from
+          # exactly the commit the release points at.
+          ref: ${{ needs.tag.outputs.tag }}
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the image tags
+        id: tags
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          set -eu
+          minor="${VERSION%.*}"
+          {
+            echo "tags<<END"
+            echo "$REGISTRY/$IMAGE_NAME:$VERSION"
+            echo "$REGISTRY/$IMAGE_NAME:$minor"
+            echo "$REGISTRY/$IMAGE_NAME:latest"
+            echo "END"
+          } >> "$GITHUB_OUTPUT"
+
+      # TARGETARCH is set by BuildKit per platform, which is what lets the
+      # Dockerfile pick the right Tailwind binary for each half of the build.
+      - name: Build and push to GHCR (linux/amd64 + linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  chart:
+    # The chart ships with the image, at the same version, to the same
+    # registry. Helm speaks OCI natively, so GHCR needs nothing added —
+    # no ChartMuseum, no gh-pages index, no second credential.
+    needs: [tag, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag, not main: this must package the chart the release
+          # actually points at.
+          ref: ${{ needs.tag.outputs.tag }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package and push the chart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -eu
+          # Belt and braces: the stamp step should already have done this,
+          # so a mismatch here means something went wrong upstream.
+          chart_version=$(helm show chart charts/kabom | awk '/^version:/{print $2}')
+          if [ "$chart_version" != "$VERSION" ]; then
+            echo "::error::Chart.yaml says $chart_version but the release is $VERSION"
+            exit 1
+          fi
+
+          helm package charts/kabom --destination dist
+          echo "$GHCR_TOKEN" | helm registry login "$REGISTRY" \
+            --username "${{ github.actor }}" --password-stdin
+
+          # Lowercased deliberately. OCI repository names must be lowercase,
+          # and github.repository_owner keeps the account's real casing
+          # ("WawRepo"), which helm rejects outright:
+          #   Error: invalid reference: invalid repository "WawRepo/charts/kabom"
+          # Same reason IMAGE_NAME above is written out in lowercase.
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm push "dist/kabom-${VERSION}.tgz" "oci://$REGISTRY/${owner}/charts"
+
+      - name: Attach the chart to the release
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: process.env.TAG,
+            });
+            const name = `kabom-${process.env.VERSION}.tgz`;
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              name,
+              data: fs.readFileSync(`dist/${name}`),
+            });
+            core.info(`Attached ${name} to ${process.env.TAG}`);

@@ -1,0 +1,30 @@
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.DS_Store
+*.sqlite3
+
+# Downloaded by scripts/build-css.sh; not checked in, redownloaded on demand.
+.tailwindcss-cli/
+
+# Playwright/node tooling for tests/e2e — never part of the runtime image.
+# package-lock.json IS committed, for reproducible `npm install`.
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+
+# Local Claude Code instructions — private, not for the public repo.
+CLAUDE.md
+
+# Local docker-compose customisation: switches the stack to Google auth and
+# holds a real client secret. Committing it would also flip
+# `docker compose up` to Google mode for everyone and break the Playwright
+# suite, which drives the basic-auth login form. See the .example next to it.
+docker-compose.override.yml
+
+# Compose reads this automatically if present. Nothing here needs it, but a
+# stray one would be a secret sitting in the repo root.
+.env

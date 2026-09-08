@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · KaBOM</title>
+    <link rel="icon" type="image/jpeg" href="/static/img/logo.jpeg" />
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <!--
+    Deliberately does not extend base.html: that layout renders the
+    freshness banner and the nav, and neither belongs in front of someone
+    who has not signed in yet — the banner would leak how stale the data is
+    and how many SBOMs failed to read, to anyone who can reach the page.
+    A plain <form method="post">, so this works with JavaScript off.
+  -->
+  <body class="flex min-h-full items-center justify-center bg-slate-50 px-4 py-12 text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-200">
+    <div class="w-full max-w-sm">
+      <div class="mb-8 flex flex-col items-center text-center">
+        <img src="/static/img/logo.jpeg" alt="" class="mb-4 h-16 w-16 rounded-2xl shadow-lg" />
+        <h1 class="text-2xl font-extrabold tracking-tight">Ka<span class="text-red-600 dark:text-red-500">BOM</span></h1>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Your SBOMs, without the enterprise.</p>
+      </div>
+
+      {% if show_google %}
+        <!--
+          A button, not an automatic redirect to /auth/login. Bouncing
+          straight through would break sign-out (the session is cleared,
+          the browser lands here, Google's still-live SSO answers instantly
+          and signs the visitor straight back in) and would also hide the
+          password form below it, which is the way back in when Google is
+          unreachable or its OAuth app is misconfigured.
+        -->
+        <div class="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <p class="text-sm text-slate-500 dark:text-slate-400">
+            Access is limited to a fixed list of addresses.
+          </p>
+          <a
+            href="/auth/login"
+            class="block w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+          >Sign in with Google</a>
+        </div>
+      {% endif %}
+
+      {% if show_google and show_password %}
+        <div class="my-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+          <span class="h-px flex-1 bg-slate-200 dark:bg-slate-800"></span>
+          or
+          <span class="h-px flex-1 bg-slate-200 dark:bg-slate-800"></span>
+        </div>
+      {% endif %}
+
+      {% if show_password %}
+      <form
+        method="post"
+        action="/login"
+        class="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+      >
+        <input type="hidden" name="next" value="{{ next }}" />
+
+        {% if error %}
+          <p
+            data-testid="login-error"
+            role="alert"
+            class="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+          >{{ error }}</p>
+        {% endif %}
+
+        <div>
+          <label for="username" class="mb-1.5 block text-sm font-medium">Username</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            required
+            autofocus
+            class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:focus:border-slate-400 dark:focus:ring-slate-400/20"
+          />
+        </div>
+
+        <div>
+          <label for="password" class="mb-1.5 block text-sm font-medium">Password</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:focus:border-slate-400 dark:focus:ring-slate-400/20"
+          />
+        </div>
+
+        <button
+          type="submit"
+          class="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900/30 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+        >Sign in</button>
+      </form>
+      {% endif %}
+
+      {% if not show_google and not show_password %}
+        <p
+          role="alert"
+          class="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+        >
+          No sign-in method is configured. Set a password
+          (<code>KABOM_BASIC_USER</code> and <code>KABOM_BASIC_PASSWORD_HASH</code>)
+          or Google OAuth, then restart.
+        </p>
+      {% endif %}
+    </div>
+  </body>
+</html>

@@ -1,0 +1,87 @@
+# Dev/test only — never part of the production image or the k8s deploy (see
+# the README). Brings up KaBOM against a local MinIO seeded with the
+# committed sample CycloneDX files, so there is a real, working instance to
+# click through or point Playwright at without ever touching your real MinIO.
+#
+# Usage:
+#   docker compose up --build            # every dev-sboms/ file plus one
+#                                         # deliberately corrupted fixture ->
+#                                         # a RED banner (see
+#                                         # scripts/seed_minio.py's docstring
+#                                         # for why that is the default)
+#   KABOM_SEED_SCENARIO=fresh docker compose up --build   # a GREEN banner
+#   KABOM_SEED_SCENARIO=amber docker compose up --build   # an AMBER banner
+#
+# Then open http://localhost:8090/. `docker compose down -v` tears it down
+# (the -v drops MinIO's named volume so the next `up` reseeds from scratch).
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-08T15-41-24Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: kabom-dev
+      MINIO_ROOT_PASSWORD: kabom-dev-secret
+    volumes:
+      - minio-data:/data
+
+  # One-shot: uploads the sample SBOMs into MinIO, then exits. Built from the
+  # same production Dockerfile as the `kabom` service below (so it already
+  # has boto3 available — see scripts/seed_minio.py's docstring for why that
+  # beats a second mc/jq-based image), with the test fixtures and the seed
+  # script itself bind-mounted in rather than baked into the image: neither
+  # belongs in the runtime image the Dockerfile produces.
+  seed:
+    build: .
+    depends_on:
+      - minio
+    volumes:
+      - ./scripts/seed_minio.py:/app/scripts/seed_minio.py:ro
+      - ./tests/samples:/app/tests/samples:ro
+      # Every *.json in here is uploaded. Drop your own Syft output in and it
+      # shows up on the next `docker compose up` — no code change needed.
+      - ./dev-sboms:/app/dev-sboms:ro
+    environment:
+      KABOM_S3_ENDPOINT: http://minio:9000
+      KABOM_S3_BUCKET: kabom-sboms
+      KABOM_S3_ACCESS_KEY: kabom-dev
+      KABOM_S3_SECRET_KEY: kabom-dev-secret
+      KABOM_SEED_SCENARIO: ${KABOM_SEED_SCENARIO:-mixed}
+    entrypoint: []
+    command: ["uv", "run", "--no-sync", "python", "scripts/seed_minio.py"]
+
+  kabom:
+    build: .
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    ports:
+      - "8090:8000"
+    environment:
+      KABOM_S3_ENDPOINT: http://minio:9000
+      KABOM_S3_BUCKET: kabom-sboms
+      KABOM_S3_ACCESS_KEY: kabom-dev
+      KABOM_S3_SECRET_KEY: kabom-dev-secret
+      # Long enough that the background refresh timer never fires during a
+      # dev session or a Playwright run and re-ingests over a scenario the
+      # test just set up.
+      KABOM_REFRESH_MINUTES: "720"
+      # Auth is mandatory, even here. This hash is for the fixed,
+      # dev-only password below it (never a real credential, never used
+      # outside this compose file) — see tests/e2e/playwright.config.ts's
+      # httpCredentials, which must match. Real deployments get their own
+      # hash from their Kubernetes Secret, never this one.
+      KABOM_AUTH: basic
+      KABOM_BASIC_USER: kabom-dev
+      # bcrypt hash of "kabom-dev-only-not-a-real-password"
+      KABOM_BASIC_PASSWORD_HASH: "$$2b$$12$$F7iaI9BH/eqVXaJv/4qBVeomI9m5qZL4F6ESGwxOIOEMxygWObFM."
+      # Signs the login session cookie. Fixed and fake, like everything else
+      # in this file — a real deployment gets one from its secret store.
+      KABOM_SESSION_SECRET: kabom-dev-only-not-a-real-session-secret
+      # Lets the session cookie travel over plain http://localhost. Dev only:
+      # without it the cookie is marked Secure, the browser refuses to send it
+      # back, and logging in here would bounce straight to the login page.
+      KABOM_INSECURE_COOKIES: "1"
+
+volumes:
+  minio-data:

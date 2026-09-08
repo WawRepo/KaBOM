@@ -1,0 +1,19 @@
+# Holds the SQLite database file (KABOM_DB_PATH, /data in the image).
+#
+# storageClass MUST provide real POSIX locking — see values.yaml's
+# persistence comment. SMB/CIFS gives none, so SQLite corrupts on it. A
+# node-local provisioner pins the single KaBOM pod to one node; that is
+# accepted, not a bug.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kabom-data
+  labels:
+    app.kubernetes.io/name: kabom
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}

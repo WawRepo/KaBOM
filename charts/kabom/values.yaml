@@ -1,0 +1,125 @@
+# Default values for the kabom chart.
+#
+# This app has exactly one deployment, forever: one replica, one namespace
+# (whatever the caller installs it into), one node (SQLite on a PVC pins it
+# there anyway). Taking the simple option, none of that is a value here —
+# there is nothing to configure because it never varies.
+
+image:
+  repository: ghcr.io/wawrepo/kabom
+  # Empty means "use Chart.yaml's appVersion", which is bumped with each
+  # release. Deliberately NOT "latest": with pullPolicy IfNotPresent a
+  # `helm upgrade` would render a byte-identical pod template, so no
+  # rollout would happen and Helm would report success while the old build
+  # kept running — and a pod recreated on a fresh node would silently pull
+  # whatever "latest" points at that day.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The published image is multi-arch (amd64 + arm64), so the pod would start
+# on any node. Pinned anyway: node-local storage binds the SQLite volume to
+# the first node the pod lands on, so the arch choice should be deliberate.
+# Set to {} to let the scheduler choose.
+nodeSelector:
+  kubernetes.io/arch: arm64
+
+# Ingress host. A placeholder — override it, there is no useful default.
+ingress:
+  host: kabom.example.com
+  # Leave empty to use the cluster's default IngressClass.
+  className: ""
+  annotations: {}
+  # TLS is off by default so `helm template`/`helm install` work with no
+  # overrides. Turn it on and point secretName at whatever cert-manager (or
+  # your own secret) provides the certificate for the real host.
+  #
+  # Left off so the chart renders and installs with no overrides, NOT
+  # because it is safe. With TLS off, every API call sends
+  # `Authorization: Basic` in clear text on every request — the bcrypt hash
+  # protects the password at rest, the wire carries the password itself.
+  # See also `insecureCookies` below: without it the session cookie will not
+  # survive plain HTTP at all. Turn TLS on for anything reachable by anyone
+  # but you.
+  tls:
+    enabled: false
+    secretName: ""
+
+# A single-user homelab app; these are generous headroom, not a tuned
+# guess. Raise them only if the app is actually observed hitting them.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Storage for the SQLite database file (KABOM_DB_PATH, mounted at /data —
+# see the Dockerfile).
+#
+# storageClass MUST provide real POSIX locking. SMB/CIFS does not, and
+# SQLite corrupts on it, which rules out most NAS-backed classes — use a
+# node-local provisioner. That pins this Pod to whichever node the volume
+# was provisioned on; with one replica and a database rebuilt from the
+# bucket in seconds, that is an accepted trade-off, not a bug.
+# NOTE: install-time only. A PVC spec is immutable apart from a size
+# INCREASE, and only on a StorageClass with allowVolumeExpansion — which
+# node-local provisioners generally lack. Changing `size` or `storageClass`
+# on an existing release makes `helm upgrade` fail and leaves it in a failed
+# state; delete the PVC and reinstall instead. Safe to do: the database is
+# rebuilt from the bucket in seconds.
+persistence:
+  storageClass: local-path
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+# Drops the `Secure` flag from the login session cookie, so it works over
+# plain HTTP. Leave this false for anything real.
+#
+# It exists because the failure without it is silent and baffling: over
+# HTTP the browser accepts the cookie at login, refuses to send it back,
+# and every request bounces to /login again with nothing in the logs. If
+# you are serving KaBOM over HTTP (ingress.tls.enabled: false, no TLS
+# terminating in front), you need this — and you should prefer fixing the
+# TLS instead, since without it the session cookie crosses the network in
+# clear text.
+insecureCookies: false
+
+# Plain (non-secret) KABOM_* environment variables. Actual credentials
+# (S3 keys, the basic-auth password hash, Google OAuth client secret, the
+# session secret, and — since they travel with those — the basic-auth
+# username and Google OAuth client ID) come from the existing Kubernetes
+# Secret named by `secretName` below, never from here.
+env:
+  s3Endpoint: ""
+  s3Bucket: ""
+  dbPath: /data/kabom.sqlite3
+  # Minutes between background re-ingests. Must be >= 1: the app reads this
+  # straight into asyncio.sleep(minutes * 60), so 0 is not "disabled", it is
+  # a tight loop pegging a CPU core against MinIO forever.
+  refreshMinutes: 60
+  # "basic" or "google" — see kabom/auth.py.
+  authMode: basic
+  # Comma-separated allow-list, only read when authMode is "google". Not a
+  # secret (it's a list of email addresses, not a credential), so it lives
+  # here rather than in the Secret.
+  allowedEmails: ""
+
+# Name of an EXISTING Kubernetes Secret, holding whichever of these keys the
+# chosen authMode needs:
+#   KABOM_S3_ACCESS_KEY, KABOM_S3_SECRET_KEY        (always)
+#   KABOM_SESSION_SECRET                            (always — both modes
+#                                                    sign a login session)
+#   KABOM_BASIC_USER, KABOM_BASIC_PASSWORD_HASH     (authMode: basic;
+#                                                    optional under google,
+#                                                    where it becomes a
+#                                                    service account for
+#                                                    scripts that cannot do
+#                                                    an OAuth flow)
+#   KABOM_GOOGLE_CLIENT_ID, KABOM_GOOGLE_CLIENT_SECRET
+#                                                   (authMode: google)
+# This chart only references it by name (envFrom.secretRef) — it never
+# creates, reads, or templates the Secret's contents, so whatever you use to
+# manage secrets (SOPS, Sealed Secrets, an external operator) keeps owning
+# them.
+secretName: kabom-secrets
