@@ -41,6 +41,27 @@ RUN tailwindcss --cwd /build -i kabom/static/css/input.css -o kabom/static/css/s
 
 FROM python:3.12-slim
 
+# Take the base image's OS packages to current before anything else.
+#
+# `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds it
+# carries whatever Debian shipped on the day it was published — and a scanner
+# reads those versions, not the tag. On 2026-09-21 this image was the only
+# thing in the homelab with critical-and-fixable findings we could act on: 7
+# of them, 5 in perl-base and 2 in libc6, every one already fixed upstream in
+# trixie. Nothing in KaBOM used either package directly; they simply came
+# along with the base and then aged.
+#
+# This line makes the fix arrive with the release rather than with the base
+# image's next rebuild. It costs a layer and a few seconds; it does not pin a
+# version, so it cannot go stale the way a pin would.
+#
+# Deliberately NOT `dist-upgrade`: that may pull in new packages or remove
+# ones the base image expects, which is a bigger change than a security
+# refresh should be.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv by copying the static binary from its official image — no pip
 # bootstrap needed, and it works the same on amd64 and arm64.
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
