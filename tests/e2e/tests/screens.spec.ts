@@ -37,6 +37,26 @@ test.describe("the three screens", () => {
     await expect(page.getByRole("link", { name: /nginx/i })).toBeVisible();
   });
 
+  test("/sboms — the filter narrows the cards and says so", async ({ page }) => {
+    await page.goto("/sboms");
+    const cards = page.locator(".sbom-card");
+    const total = await cards.count();
+    expect(total).toBeGreaterThan(1);
+
+    // "nginx" matches exactly one committed dev SBOM (nginx-1.27-alpine).
+    await page.locator("#sbom-filter").fill("nginx");
+    await expect(page.locator(".sbom-card:visible")).toHaveCount(1);
+    await expect(page.getByTestId("sbom-count")).toHaveText(new RegExp(`^\\s*1 of ${total} SBOMs\\s*$`));
+
+    await page.locator("#sbom-filter").fill("no-such-thing");
+    await expect(page.locator(".sbom-card:visible")).toHaveCount(0);
+    await expect(page.locator("#sbom-no-match")).toBeVisible();
+
+    await page.locator("#sbom-filter").fill("");
+    await expect(page.locator(".sbom-card:visible")).toHaveCount(total);
+    await expect(page.locator("#sbom-no-match")).toBeHidden();
+  });
+
   test("/sboms/{id} — the contents screen lists real components", async ({ page }) => {
     await page.goto("/sboms");
     await page.getByRole("link", { name: /nginx/i }).click();

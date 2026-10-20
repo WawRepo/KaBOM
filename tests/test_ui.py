@@ -301,6 +301,34 @@ def test_sboms_page_treats_unknown_age_as_oldest(client, conn, monkeypatch):
     assert _card_position(response.text, "unknown-age") < _card_position(response.text, "known")
 
 
+def test_sboms_page_has_a_filter_over_subject_and_kind(client, conn, monkeypatch):
+    now = datetime.now(UTC)
+    seed(
+        conn,
+        [
+            make_sbom("hosts/pi6.cdx.json", "pi6", now, []),
+            make_sbom("images/nginx.cdx.json", "docker.io/library/NGINX:1.27", now, []),
+        ],
+        monkeypatch,
+    )
+
+    response = client.get("/sboms")
+
+    assert 'id="sbom-filter"' in response.text
+    # The JS matches against data-filter, so it must hold the subject AND
+    # the kind, lower-cased: typing "nginx" or "host" has to find the card.
+    filters = re.findall(r'data-filter="([^"]*)"', response.text)
+    assert sorted(filters) == ["docker.io/library/nginx:1.27 image", "pi6 host"]
+    assert re.search(r'id="sbom-shown">\s*2\s*</span> of 2 SBOMs', response.text)
+
+
+def test_sboms_page_with_no_sboms_has_no_filter(client):
+    response = client.get("/sboms")
+
+    assert "No SBOMs ingested yet." in response.text
+    assert 'id="sbom-filter"' not in response.text
+
+
 # --- /sboms/{id}: full contents, filterable client-side ----------------------
 
 

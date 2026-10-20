@@ -10,11 +10,41 @@
   </div>
 
   {% if sboms %}
+    <!--
+      Client-side filter, the same pattern as sbom_detail.html: it only
+      hides/shows cards already rendered server-side, so with JavaScript
+      unavailable the full inventory stays visible — never a dead control.
+      It matches the subject (image ref or host name) and the kind.
+    -->
+    <label for="sbom-filter" class="sr-only">Filter the inventory</label>
+    <div class="relative mb-2">
+      <span aria-hidden="true" class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
+        </svg>
+      </span>
+      <input
+        type="text"
+        id="sbom-filter"
+        placeholder="Filter by image or host…"
+        autocomplete="off"
+        oninput="kabomFilterSboms(this.value)"
+        class="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-900/5 dark:border-slate-700 dark:bg-slate-900 dark:focus:border-slate-400 dark:focus:ring-slate-400/10"
+      />
+    </div>
+    <p class="mb-4 text-xs text-slate-500 dark:text-slate-400" data-testid="sbom-count">
+      <span id="sbom-shown">{{ sboms|length }}</span> of {{ sboms|length }} SBOM{{ "" if sboms|length == 1 else "s" }}
+    </p>
+    <p id="sbom-no-match" class="mb-4 hidden rounded-2xl border border-dashed border-slate-300 px-6 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+      No SBOM matches that filter.
+    </p>
+
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="sbom-list">
       {% for s in sboms %}
         <a
           href="/sboms/{{ s.id }}"
-          class="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+          data-filter="{{ ((s.subject or '') ~ ' ' ~ s.kind)|lower }}"
+          class="sbom-card group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
         >
           <div class="flex items-start justify-between gap-3">
             <span class="min-w-0 truncate font-semibold group-hover:underline">
@@ -41,6 +71,22 @@
         </a>
       {% endfor %}
     </div>
+
+    <script>
+      // Vanilla JS, no build step, no framework — filters cards already
+      // present in the DOM; see the comment above for the no-JS fallback.
+      function kabomFilterSboms(value) {
+        var needle = value.trim().toLowerCase();
+        var shown = 0;
+        document.querySelectorAll(".sbom-card").forEach(function (card) {
+          var match = card.dataset.filter.indexOf(needle) !== -1;
+          card.style.display = match ? "" : "none";
+          if (match) shown += 1;
+        });
+        document.getElementById("sbom-shown").textContent = shown;
+        document.getElementById("sbom-no-match").classList.toggle("hidden", shown !== 0);
+      }
+    </script>
   {% else %}
     <div class="rounded-2xl border border-dashed border-slate-300 px-6 py-12 text-center dark:border-slate-700">
       <p class="font-medium">No SBOMs ingested yet.</p>
