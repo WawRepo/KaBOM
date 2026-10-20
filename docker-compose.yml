@@ -17,15 +17,14 @@
 
 services:
   minio:
-    # quay.io, not Docker Hub: MinIO deleted minio/minio and minio/mc from
-    # Docker Hub. Measured 2026-09-21 — an anonymous pull token is still
-    # issued, then the manifest returns 401, and Docker Hub's own API answers
-    # {"message":"object not found"}, while library/busybox returns 200 by the
-    # same method. The e2e job failed on exactly that: "pull access denied for
-    # minio/minio ... KaBOM never became healthy".
-    #
-    # Same release, byte for byte — only the registry changed.
-    image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+    # pgsty/minio, a community build of the MinIO server, because MinIO no
+    # longer publishes one anyone can pull. Docker Hub's minio/minio went
+    # first (2026-09-21: "pull access denied for minio/minio"), then the
+    # quay.io copy that replaced it (2026-10-20: "401 Unauthorized", and the
+    # e2e job failed with "KaBOM never became healthy" both times). The
+    # homelab already uses the same fork's mc image (pgsty/mc). Pinned by
+    # digest, so the test server cannot change under the tests (HOME-815).
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: kabom-dev
