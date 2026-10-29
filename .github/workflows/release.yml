@@ -38,7 +38,7 @@ jobs:
       tag: ${{ steps.next.outputs.tag }}
       version: ${{ steps.next.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           # Tags are what the version is derived from, and a shallow clone
           # has none of them.
@@ -100,7 +100,7 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create the tag and the release
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         env:
           TAG: ${{ steps.next.outputs.tag }}
           SHA: ${{ steps.stamp.outputs.sha }}
@@ -125,16 +125,16 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           # The tag just created, not main: the image must be built from
           # exactly the commit the release points at.
           ref: ${{ needs.tag.outputs.tag }}
 
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -158,7 +158,7 @@ jobs:
       # TARGETARCH is set by BuildKit per platform, which is what lets the
       # Dockerfile pick the right Tailwind binary for each half of the build.
       - name: Build and push to GHCR (linux/amd64 + linux/arm64)
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -177,14 +177,14 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           # The tag, not main: this must package the chart the release
           # actually points at.
           ref: ${{ needs.tag.outputs.tag }}
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4.3.1
 
       - name: Package and push the chart
         env:
@@ -214,7 +214,7 @@ jobs:
           helm push "dist/kabom-${VERSION}.tgz" "oci://$REGISTRY/${owner}/charts"
 
       - name: Attach the chart to the release
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         env:
           TAG: ${{ needs.tag.outputs.tag }}
           VERSION: ${{ needs.tag.outputs.version }}
