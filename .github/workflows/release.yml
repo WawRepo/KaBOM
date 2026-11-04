@@ -38,7 +38,7 @@ jobs:
       tag: ${{ steps.next.outputs.tag }}
       version: ${{ steps.next.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Tags are what the version is derived from, and a shallow clone
           # has none of them.
@@ -125,7 +125,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # The tag just created, not main: the image must be built from
           # exactly the commit the release points at.
@@ -177,7 +177,7 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # The tag, not main: this must package the chart the release
           # actually points at.
